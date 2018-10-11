@@ -1,6 +1,8 @@
 # Koi
 
-WIP
+[![](https://godoc.org/github.com/matthewmueller/koi?status.svg)](http://godoc.org/github.com/matthewmueller/koi)
+
+Simple router and middleware.
 
 ## As a router
 
