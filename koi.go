@@ -182,7 +182,7 @@ func (k *Koi) route(fn reflect.Value) *route {
 			r.context = true
 			continue
 		}
-		if unrollPointer(arg).Kind() == reflect.Struct {
+		if unroll(arg).Kind() == reflect.Struct {
 			r.param = arg
 			continue
 		}
@@ -196,7 +196,7 @@ func (k *Koi) route(fn reflect.Value) *route {
 			r.error = true
 			continue
 		}
-		if unrollPointer(result).Kind() == reflect.Struct {
+		if unroll(result).Kind() == reflect.Struct {
 			r.result = result
 			continue
 		}
@@ -397,7 +397,7 @@ func validate(t reflect.Type, v reflect.Value, check func(s interface{}) error) 
 	case reflect.Struct:
 		return check(v.Interface())
 	case reflect.Ptr:
-		return validate(unrollPointer(t), v.Elem(), check)
+		return validate(unroll(t), v.Elem(), check)
 	case reflect.Slice, reflect.Array:
 		for i := 0; i < v.Elem().Len(); i++ {
 			item := v.Elem().Index(i)
@@ -424,7 +424,7 @@ func isError(v reflect.Value) bool {
 
 // jsonTypeName returns the JSON name of the corresponding Go type.
 func jsonTypeName(t reflect.Type) string {
-	switch unrollPointer(t).Kind() {
+	switch unroll(t).Kind() {
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
 		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64,
 		reflect.Float32, reflect.Float64:
@@ -444,8 +444,8 @@ func jsonTypeName(t reflect.Type) string {
 	}
 }
 
-// unrollPointer unrolls and pointers of a type.
-func unrollPointer(t reflect.Type) reflect.Type {
+// unroll unrolls and pointers of a type.
+func unroll(t reflect.Type) reflect.Type {
 	for t.Kind() == reflect.Ptr {
 		t = t.Elem()
 	}
