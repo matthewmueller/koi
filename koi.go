@@ -72,6 +72,7 @@ func Write(fn func(w http.ResponseWriter, v interface{}) error) Option {
 	}
 }
 
+// default write function
 func write(w http.ResponseWriter, v interface{}) error {
 	// koi error
 	if e, ok := v.(Error); ok {
