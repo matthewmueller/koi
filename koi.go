@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"net/http"
 	"reflect"
@@ -26,126 +27,155 @@ type OutputResult struct {
 	Result interface{} `json:"result"`
 }
 
-var readBody = ioutil.ReadAll
-var valid = validator.New()
+// options for koi
+type options struct {
+	ReadBody func(r io.Reader) ([]byte, error)
+	Validate func(s interface{}) error
+}
 
-// New koi wrapper
-func New(v interface{}) http.HandlerFunc {
-	fn := reflect.ValueOf(v)
-	if fn.Kind() != reflect.Func {
-		panic("not a function")
+// Option for koi
+type Option func(*options)
+
+// ReadBody option allows you to customize how the body
+// is read. Defaults to ioutil.ReadAll(r.Body)
+func ReadBody(fn func(r io.Reader) ([]byte, error)) Option {
+	return func(opts *options) {
+		opts.ReadBody = fn
+	}
+}
+
+// Validator sets a custom input validator. Defaults to using
+// "gopkg.in/go-playground/validator.v9".Struct
+func Validator(fn func(s interface{}) error) Option {
+	return func(opts *options) {
+		opts.Validate = fn
+	}
+}
+
+// New koi middleware
+func New(opts ...func(*options)) func(v interface{}) http.HandlerFunc {
+	o := &options{
+		ReadBody: ioutil.ReadAll,
+		Validate: validator.New().Struct,
 	}
 
-	t := fn.Type()
-	h := handler{}
+	return func(v interface{}) http.HandlerFunc {
+		fn := reflect.ValueOf(v)
+		if fn.Kind() != reflect.Func {
+			panic("not a function")
+		}
 
-	params := make([]reflect.Value, t.NumIn())
-	for i := range params {
-		arg := t.In(i)
-		switch arg.String() {
-		case "http.ResponseWriter":
-			h.response = true
-			continue
-		case "*http.Request":
-			h.request = true
-			continue
-		case "context.Context":
-			h.context = true
-			continue
-		}
-		if arg.Kind() == reflect.Struct {
-			h.param = arg
-			continue
-		}
-	}
+		t := fn.Type()
+		h := handler{}
 
-	results := make([]reflect.Value, t.NumOut())
-	for i := range results {
-		result := t.Out(i)
-		switch result.String() {
-		case "error":
-			h.error = true
-			continue
+		params := make([]reflect.Value, t.NumIn())
+		for i := range params {
+			arg := t.In(i)
+			switch arg.String() {
+			case "http.ResponseWriter":
+				h.response = true
+				continue
+			case "*http.Request":
+				h.request = true
+				continue
+			case "context.Context":
+				h.context = true
+				continue
+			}
+			if unrollPointer(arg).Kind() == reflect.Struct {
+				h.param = arg
+				continue
+			}
 		}
-		if result.Kind() == reflect.Struct {
-			h.result = result
-			continue
-		}
-	}
 
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// read the request body
-		body, err := readBody(r.Body)
-		if err != nil {
-			sendError(w, NewError(400, "malformed_request", "Request body must be present"))
-			return
+		results := make([]reflect.Value, t.NumOut())
+		for i := range results {
+			result := t.Out(i)
+			switch result.String() {
+			case "error":
+				h.error = true
+				continue
+			}
+			if unrollPointer(result).Kind() == reflect.Struct {
+				h.result = result
+				continue
+			}
 		}
-		r.Body.Close()
 
-		bw := bufferedWriter{ResponseWriter: w}
-
-		var params []reflect.Value
-		if h.response {
-			params = append(params, reflect.ValueOf(&bw))
-		}
-		if h.request {
-			params = append(params, reflect.ValueOf(r))
-		}
-		if h.param != nil {
-			stct := reflect.New(h.param)
-			if err := json.Unmarshal(body, stct.Interface()); err != nil {
-				sendError(w, NewError(400, "malformed_request", fmt.Sprintf("invalid body, expected %s", jsonTypeName(h.param))))
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// read the request body
+			body, err := o.ReadBody(r.Body)
+			if err != nil {
+				sendError(w, NewError(400, "malformed_request", "Request body must be present"))
 				return
 			}
-			if err := validate(h.param, stct); err != nil {
-				sendError(w, NewError(400, "invalid_input", err.Error()))
+			r.Body.Close()
+
+			bw := bufferedWriter{ResponseWriter: w}
+
+			var params []reflect.Value
+			if h.response {
+				params = append(params, reflect.ValueOf(&bw))
+			}
+			if h.request {
+				params = append(params, reflect.ValueOf(r))
+			}
+			if h.param != nil {
+				stct := reflect.New(h.param)
+				if err := json.Unmarshal(body, stct.Interface()); err != nil {
+					sendError(w, NewError(400, "malformed_request", fmt.Sprintf("invalid body, expected %s", jsonTypeName(h.param))))
+					return
+				}
+				if err := validate(h.param, stct, o.Validate); err != nil {
+					sendError(w, NewError(400, "invalid_input", err.Error()))
+					return
+				}
+				params = append(params, stct.Elem())
+			}
+
+			results := fn.Call(params)
+			var resValue, errValue reflect.Value
+			for _, v := range results {
+				if isError(v) {
+					errValue = v
+				} else {
+					resValue = v
+				}
+			}
+
+			// error
+			if errValue.IsValid() && !errValue.IsNil() {
+				w.Header().Set("Content-Type", "application/json")
+				e := errValue.Interface().(error)
+				sendError(w, e)
 				return
 			}
-			params = append(params, stct.Elem())
-		}
 
-		results := fn.Call(params)
-		var resValue, errValue reflect.Value
-		for _, v := range results {
-			if isError(v) {
-				errValue = v
-			} else {
-				resValue = v
+			if h.result == nil {
+				buffer := bw.buf.Bytes()
+				if len(buffer) > 0 {
+					w.Write(buffer)
+					return
+				}
 			}
-		}
 
-		// error
-		if errValue.IsValid() && !errValue.IsNil() {
+			// value
 			w.Header().Set("Content-Type", "application/json")
-			e := errValue.Interface().(error)
-			sendError(w, e)
-			return
-		}
+			var out OutputResult
 
-		if h.result == nil {
-			buffer := bw.buf.Bytes()
-			if len(buffer) > 0 {
-				w.Write(buffer)
+			if resValue.IsValid() {
+				out.Result = resValue.Interface()
+			}
+
+			b, err := json.Marshal(out)
+			if err != nil {
+				sendError(w, NewError(400, "malformed_response", err.Error()))
 				return
 			}
-		}
 
-		// value
-		w.Header().Set("Content-Type", "application/json")
-		var out OutputResult
-
-		if resValue.IsValid() {
-			out.Result = resValue.Interface()
-		}
-
-		b, err := json.Marshal(out)
-		if err != nil {
-			sendError(w, NewError(400, "malformed_response", err.Error()))
-			return
-		}
-
-		w.Write(b)
-	})
+			w.Write(b)
+		})
+	}
 }
 
 type bufferedWriter struct {
@@ -176,16 +206,16 @@ func sendError(w http.ResponseWriter, err error) {
 	w.Write(b)
 }
 
-func validate(t reflect.Type, v reflect.Value) error {
+func validate(t reflect.Type, v reflect.Value, check func(s interface{}) error) error {
 	switch t.Kind() {
-	case reflect.Ptr:
-		return validate(unrollPointer(t), v.Elem())
 	case reflect.Struct:
-		return valid.Struct(v.Interface())
+		return check(v.Interface())
+	case reflect.Ptr:
+		return validate(unrollPointer(t), v.Elem(), check)
 	case reflect.Slice, reflect.Array:
 		for i := 0; i < v.Elem().Len(); i++ {
 			item := v.Elem().Index(i)
-			if err := validate(item.Type(), item); err != nil {
+			if err := validate(item.Type(), item, check); err != nil {
 				return err
 			}
 		}
