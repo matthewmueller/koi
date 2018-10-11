@@ -41,18 +41,19 @@ func (r *Request) Param(name string) string {
 
 // options for koi
 type options struct {
-	ReadBody func(r io.Reader) ([]byte, error)
+	Read     func(r io.Reader) ([]byte, error)
 	Validate func(s interface{}) error
+	Write    func(w http.ResponseWriter, v interface{}) error
 }
 
 // Option for koi
 type Option func(*options)
 
-// ReadBody option allows you to customize how the body
+// Read option allows you to customize how the body
 // is read. Defaults to ioutil.ReadAll(r.Body)
-func ReadBody(fn func(r io.Reader) ([]byte, error)) Option {
+func Read(fn func(r io.Reader) ([]byte, error)) Option {
 	return func(opts *options) {
-		opts.ReadBody = fn
+		opts.Read = fn
 	}
 }
 
@@ -62,6 +63,42 @@ func Validator(fn func(s interface{}) error) Option {
 	return func(opts *options) {
 		opts.Validate = fn
 	}
+}
+
+// Write option customizes how to write the data back
+func Write(fn func(w http.ResponseWriter, v interface{}) error) Option {
+	return func(opts *options) {
+		opts.Write = fn
+	}
+}
+
+func write(w http.ResponseWriter, v interface{}) error {
+	// koi error
+	if e, ok := v.(Error); ok {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(e.Status)
+		b, err := json.Marshal(e)
+		if err != nil {
+			http.Error(w, "Error marshalling output error", http.StatusInternalServerError)
+			return err
+		}
+		w.Write(b)
+		return nil
+	}
+
+	// all other errors
+	if e, ok := v.(error); ok {
+		return write(w, NewError(500, "", e.Error()))
+	}
+
+	// all other response bodies
+	b, err := json.Marshal(v)
+	if err != nil {
+		return write(w, NewError(400, "malformed_response", err.Error()))
+	}
+	w.Write(b)
+
+	return nil
 }
 
 // Koi struct
@@ -75,8 +112,9 @@ type Koi struct {
 func New(opts ...func(*options)) *Koi {
 	r := httprouter.New()
 	o := &options{
-		ReadBody: ioutil.ReadAll,
+		Read:     ioutil.ReadAll,
 		Validate: validator.New().Struct,
+		Write:    write,
 	}
 	for _, opt := range opts {
 		opt(o)
@@ -268,9 +306,9 @@ func (k *Koi) Wrap(handler interface{}) http.HandlerFunc {
 
 func (k *Koi) respond(route *route, w http.ResponseWriter, r *http.Request, p httprouter.Params) {
 	// read the request body
-	body, err := k.o.ReadBody(r.Body)
+	body, err := k.o.Read(r.Body)
 	if err != nil {
-		sendError(w, NewError(400, "malformed_request", "Request body must be present"))
+		k.o.Write(w, NewError(400, "malformed_request", "Request body must be present"))
 		return
 	}
 	r.Body.Close()
@@ -290,11 +328,11 @@ func (k *Koi) respond(route *route, w http.ResponseWriter, r *http.Request, p ht
 	if route.param != nil {
 		stct := reflect.New(route.param)
 		if err := json.Unmarshal(body, stct.Interface()); err != nil {
-			sendError(w, NewError(400, "malformed_request", fmt.Sprintf("invalid body, expected %s", jsonTypeName(route.param))))
+			k.o.Write(w, NewError(400, "malformed_request", fmt.Sprintf("invalid body, expected %s", jsonTypeName(route.param))))
 			return
 		}
 		if err := validate(route.param, stct, k.o.Validate); err != nil {
-			sendError(w, NewError(400, "invalid_input", err.Error()))
+			k.o.Write(w, NewError(400, "invalid_input", err.Error()))
 			return
 		}
 		params = append(params, stct.Elem())
@@ -302,7 +340,7 @@ func (k *Koi) respond(route *route, w http.ResponseWriter, r *http.Request, p ht
 
 	// TODO: we should be able to catch this on startup
 	if route.numIn != len(params) {
-		sendError(w, NewError(500, "bad_handler_signature", "handler function parameter mismatch"))
+		k.o.Write(w, NewError(500, "bad_handler_signature", "handler function parameter mismatch"))
 		return
 	}
 
@@ -320,7 +358,7 @@ func (k *Koi) respond(route *route, w http.ResponseWriter, r *http.Request, p ht
 	if errValue.IsValid() && !errValue.IsNil() {
 		w.Header().Set("Content-Type", "application/json")
 		e := errValue.Interface().(error)
-		sendError(w, e)
+		k.o.Write(w, e)
 		return
 	}
 
@@ -340,13 +378,7 @@ func (k *Koi) respond(route *route, w http.ResponseWriter, r *http.Request, p ht
 		out = resValue.Interface()
 	}
 
-	b, err := json.Marshal(out)
-	if err != nil {
-		sendError(w, NewError(400, "malformed_response", err.Error()))
-		return
-	}
-
-	w.Write(b)
+	k.o.Write(w, out)
 }
 
 type bufferedWriter struct {
@@ -357,24 +389,6 @@ type bufferedWriter struct {
 func (w *bufferedWriter) Write(b []byte) (n int, err error) {
 	w.buf.Write(b)
 	return len(b), nil
-}
-
-func sendError(w http.ResponseWriter, err error) {
-	w.Header().Set("Content-Type", "application/json")
-
-	e, ok := err.(Error)
-	if !ok {
-		e = NewError(500, "", err.Error()).(Error)
-	}
-
-	w.WriteHeader(e.Status)
-	b, err := json.Marshal(e)
-	if err != nil {
-		http.Error(w, "Error marshalling output error", http.StatusInternalServerError)
-		return
-	}
-
-	w.Write(b)
 }
 
 func validate(t reflect.Type, v reflect.Value, check func(s interface{}) error) error {
