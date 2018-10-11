@@ -1,4 +1,4 @@
-# Koi
+# Koi 🐠
 
 [![](https://godoc.org/github.com/matthewmueller/koi?status.svg)](http://godoc.org/github.com/matthewmueller/koi)
 
