@@ -25,6 +25,33 @@ api.Post("/:first/:last", func(r *koi.Request, v Input) (o Output, e error) {
 http.ListenAndServe(":3000", api)
 ```
 
+## Router with middleware
+
+```go
+api := koi.New()
+
+type Input struct {
+  Hello string `json:"hello,omitempty" validate:"required"`
+}
+
+type Output struct {
+  Goodbye string `json:"goodbye,omitempty"`
+}
+
+middleware := func(w http.ResponseWriter, r *http.Request, next http.HandlerFunc) {
+  fmt.Println("a ->")
+  next(w, r)
+  fmt.Println("a <-")
+}
+
+api.Post("/:first/:last", middleware, func(r *koi.Request, v Input) (o Output, e error) {
+  o.Goodbye = fmt.Sprintf("adios %s %s!", r.Param("first"), r.Param("last"))
+  return o, nil
+})
+
+http.ListenAndServe(":3000", api)
+```
+
 ## With request & response
 
 ```go
