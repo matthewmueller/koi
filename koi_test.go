@@ -365,6 +365,15 @@ func TestWrap(t *testing.T) {
 		// {
 		// 	name: "(r,v) (r,e)",
 		// },
+		// {
+		// 	name: "(kr,v) ()",
+		// },
+		// {
+		// 	name: "(kr,v) (e)",
+		// },
+		// {
+		// 	name: "(kr,v) (r,e)",
+		// },
 	}
 
 	for _, test := range tests {
