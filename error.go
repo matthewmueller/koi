@@ -1,10 +1,5 @@
 package koi
 
-// OutputError is a error result of a function call.
-type OutputError struct {
-	Error Error `json:"error"`
-}
-
 // Error is an koi error.
 type Error struct {
 	Status  int    `json:"-"`

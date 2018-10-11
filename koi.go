@@ -39,11 +39,6 @@ func (r *Request) Param(name string) string {
 	return r.params.ByName(name)
 }
 
-// OutputResult is a value result of a function call.
-type OutputResult struct {
-	Result interface{} `json:"result"`
-}
-
 // options for koi
 type options struct {
 	ReadBody func(r io.Reader) ([]byte, error)
@@ -339,10 +334,10 @@ func (k *Koi) respond(route *route, w http.ResponseWriter, r *http.Request, p ht
 
 	// value
 	w.Header().Set("Content-Type", "application/json")
-	var out OutputResult
+	var out interface{}
 
 	if resValue.IsValid() {
-		out.Result = resValue.Interface()
+		out = resValue.Interface()
 	}
 
 	b, err := json.Marshal(out)
@@ -373,7 +368,7 @@ func sendError(w http.ResponseWriter, err error) {
 	}
 
 	w.WriteHeader(e.Status)
-	b, err := json.Marshal(OutputError{e})
+	b, err := json.Marshal(e)
 	if err != nil {
 		http.Error(w, "Error marshalling output error", http.StatusInternalServerError)
 		return

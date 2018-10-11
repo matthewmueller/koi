@@ -53,7 +53,7 @@ func TestWrap(t *testing.T) {
 			Connection: close
 			Content-Type: application/json
 
-			{"result":null}
+			null
 		`,
 		},
 		{
@@ -68,7 +68,7 @@ func TestWrap(t *testing.T) {
 			Connection: close
 			Content-Type: application/json
 
-			{"result":null}
+			null
 		`,
 		},
 		{
@@ -85,7 +85,7 @@ func TestWrap(t *testing.T) {
 			Connection: close
 			Content-Type: application/json
 
-			{"result":null}
+			null
 		`,
 		},
 		{
@@ -102,7 +102,7 @@ func TestWrap(t *testing.T) {
 			Connection: close
 			Content-Type: application/json
 
-			{"error":{"message":"oh noz"}}
+			{"message":"oh noz"}
 		`,
 		},
 		{
@@ -118,7 +118,7 @@ func TestWrap(t *testing.T) {
 			Connection: close
 			Content-Type: application/json
 
-			{"result":"hi"}
+			"hi"
 		`,
 		},
 		{
@@ -134,7 +134,7 @@ func TestWrap(t *testing.T) {
 			Connection: close
 			Content-Type: application/json
 
-			{"error":{"message":"Oh noz."}}
+			{"message":"Oh noz."}
 		`,
 		},
 		{
@@ -150,7 +150,7 @@ func TestWrap(t *testing.T) {
 			Connection: close
 			Content-Type: application/json
 
-			{"result":""}
+			""
 		`,
 		},
 		{
@@ -166,7 +166,7 @@ func TestWrap(t *testing.T) {
 			Connection: close
 			Content-Type: application/json
 
-			{"result":"hi"}
+			"hi"
 		`,
 		},
 		{
@@ -222,7 +222,7 @@ func TestWrap(t *testing.T) {
 			Content-Type: application/json
 			X-Test: machina
 
-			{"error":{"message":"oh noz"}}
+			{"message":"oh noz"}
 		`,
 		},
 		{
@@ -257,7 +257,7 @@ func TestWrap(t *testing.T) {
 			Connection: close
 			Content-Type: application/json
 
-			{"result":null}
+			null
 		`,
 		},
 		{
@@ -275,7 +275,7 @@ func TestWrap(t *testing.T) {
 			Connection: close
 			Content-Type: application/json
 
-			{"error":{"message":"oh noz"}}
+			{"message":"oh noz"}
 		`,
 		},
 		{
@@ -295,7 +295,7 @@ func TestWrap(t *testing.T) {
 			Content-Type: application/json
 			X-Test: machina
 
-			{"result":{"Ok":true}}
+			{"Ok":true}
 		`,
 		},
 		{
@@ -315,7 +315,7 @@ func TestWrap(t *testing.T) {
 			Content-Type: application/json
 			X-Test: machina
 
-			{"result":{"Ok":true}}
+			{"Ok":true}
 		`,
 		},
 		{
@@ -331,7 +331,38 @@ func TestWrap(t *testing.T) {
 			Connection: close
 			Content-Type: application/json
 
-			{"result":"POST"}
+			"POST"
+		`,
+		},
+		{
+			name:    "malformed",
+			request: req("POST", "/matt", `{hello":"hi"}`),
+			test: func(t *testing.T) http.HandlerFunc {
+				return koi.New().Wrap(func(v struct{ Hello string }) {})
+			},
+			expected: `
+			HTTP/1.1 400 Bad Request
+			Connection: close
+			Content-Type: application/json
+
+			{"type":"malformed_request","message":"invalid body, expected object"}
+		`,
+		},
+		{
+			name:    "invalid input",
+			request: req("POST", "/matt", `{"hello":""}`),
+			test: func(t *testing.T) http.HandlerFunc {
+				return koi.New().Wrap(func(v struct {
+					Hello string `validate:"required"`
+				}) {
+				})
+			},
+			expected: `
+			HTTP/1.1 400 Bad Request
+			Connection: close
+			Content-Type: application/json
+
+			{"type":"invalid_input","message":"Key: 'Hello' Error:Field validation for 'Hello' failed on the 'required' tag"}
 		`,
 		},
 		// {
@@ -416,7 +447,7 @@ func TestHandler(t *testing.T) {
 				Connection: close
 				Content-Type: application/json
 
-				{"result":{"goodbye":"adios matt mueller!"}}
+				{"goodbye":"adios matt mueller!"}
 			`,
 		},
 		{
@@ -440,7 +471,7 @@ func TestHandler(t *testing.T) {
 				Connection: close
 				Content-Type: application/json
 
-				{"result":{"goodbye":"adios /matt/mueller!"}}
+				{"goodbye":"adios /matt/mueller!"}
 			`,
 		},
 		{
@@ -504,7 +535,7 @@ func TestHandler(t *testing.T) {
 				Content-Type: application/json
 				X-Cool: story bro
 
-				{"result":"hi"}
+				"hi"
 			`,
 		},
 	}
