@@ -10,7 +10,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/julienschmidt/httprouter"
 	"github.com/matthewmueller/diff"
 	"github.com/matthewmueller/koi"
 	"github.com/renstrom/dedent"
@@ -384,111 +383,147 @@ func TestWrap(t *testing.T) {
 			res := w.Result()
 			buf, err := httputil.DumpResponse(res, true)
 			assert.NoError(t, err)
-			dif(t, test.expected, string(buf))
+			difference(t, test.expected, string(buf))
 		})
 	}
 }
 
-func TestPost(t *testing.T) {
-	api := koi.New()
+func TestHandler(t *testing.T) {
+	var tests = []struct {
+		name     string
+		request  *http.Request
+		test     func(t testing.TB) http.Handler
+		expected string
+	}{
+		{
+			name:    "post /:first/:last",
+			request: req("POST", "/matt/mueller", `{"hello":"hola"}`),
+			test: func(t testing.TB) http.Handler {
+				type Input struct {
+					Hello string `json:"hello,omitempty" validate:"required"`
+				}
+				type Output struct {
+					Goodbye string `json:"goodbye,omitempty"`
+				}
+				return koi.New().Post("/:first/:last", func(r *koi.Request, v Input) (o Output, e error) {
+					assert.Equal(t, v.Hello, "hola")
+					o.Goodbye = fmt.Sprintf("adios %s %s!", r.Param("first"), r.Param("last"))
+					return o, nil
+				})
+			},
+			expected: `
+				HTTP/1.1 200 OK
+				Connection: close
+				Content-Type: application/json
 
-	type Input struct {
-		Hello string `json:"hello,omitempty" validate:"required"`
+				{"result":{"goodbye":"adios matt mueller!"}}
+			`,
+		},
+		{
+			name:    "post /*name",
+			request: req("POST", "/matt/mueller", `{"hello":"hola"}`),
+			test: func(t testing.TB) http.Handler {
+				type Input struct {
+					Hello string `json:"hello,omitempty" validate:"required"`
+				}
+				type Output struct {
+					Goodbye string `json:"goodbye,omitempty"`
+				}
+				return koi.New().Post("/*name", func(r *koi.Request, v Input) (o Output, e error) {
+					assert.Equal(t, v.Hello, "hola")
+					o.Goodbye = fmt.Sprintf("adios %s!", r.Param("name"))
+					return o, nil
+				})
+			},
+			expected: `
+				HTTP/1.1 200 OK
+				Connection: close
+				Content-Type: application/json
+
+				{"result":{"goodbye":"adios /matt/mueller!"}}
+			`,
+		},
+		{
+			name:    "post 404",
+			request: req("POST", "/matt/mueller", `{"hello":"hola"}`),
+			test: func(t testing.TB) http.Handler {
+				type Input struct {
+					Hello string `json:"hello,omitempty" validate:"required"`
+				}
+				type Output struct {
+					Goodbye string `json:"goodbye,omitempty"`
+				}
+				return koi.New().Post("/", func(r *koi.Request, v Input) (o Output, e error) {
+					assert.Equal(t, v.Hello, "hola")
+					o.Goodbye = fmt.Sprintf("adios %s!", r.Param("name"))
+					return o, nil
+				})
+			},
+			expected: `
+				HTTP/1.1 404 Not Found
+				Connection: close
+				Content-Type: text/plain; charset=utf-8
+				X-Content-Type-Options: nosniff
+
+				404 page not found
+			`,
+		},
+		{
+			name:    "post / with middleware",
+			request: req("POST", "/", `{"hello":"hola"}`),
+			test: func(t testing.TB) http.Handler {
+				var steps []string
+
+				another := func() {
+					steps = append(steps, "d ->")
+				}
+
+				return koi.New().Post("/",
+					func(w http.ResponseWriter, r *http.Request, next http.HandlerFunc) {
+						steps = append(steps, "a ->")
+						next(w, r)
+						steps = append(steps, "a <-")
+						assert.Equal(t, "a ->, b ->, c ->, d ->, a <-", strings.Join(steps, ", "))
+					},
+					func(w http.ResponseWriter, r *http.Request) {
+						steps = append(steps, "b ->")
+					},
+					func(w http.ResponseWriter) {
+						w.Header().Add("X-cool", "story bro")
+						steps = append(steps, "c ->")
+					},
+					another,
+					func() (s string) {
+						assert.Equal(t, "a ->, b ->, c ->, d ->", strings.Join(steps, ", "))
+						return "hi"
+					})
+			},
+			expected: `
+				HTTP/1.1 200 OK
+				Connection: close
+				Content-Type: application/json
+				X-Cool: story bro
+
+				{"result":"hi"}
+			`,
+		},
 	}
 
-	type Output struct {
-		Goodbye string `json:"goodbye,omitempty"`
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			fn := test.test(t)
+			w := httptest.NewRecorder()
+			fn.ServeHTTP(w, test.request)
+			res := w.Result()
+			buf, err := httputil.DumpResponse(res, true)
+			assert.NoError(t, err)
+			difference(t, test.expected, string(buf))
+		})
 	}
-
-	api.Post("/:first/:last", func(r *koi.Request, v Input) (o Output, e error) {
-		assert.Equal(t, v.Hello, "hola")
-		o.Goodbye = fmt.Sprintf("adios %s %s!", r.Param("first"), r.Param("last"))
-		return o, nil
-	})
-
-	r := req("POST", "/matt/mueller", `{"hello":"hola"}`)
-	w := httptest.NewRecorder()
-	api.ServeHTTP(w, r)
-	res := w.Result()
-	buf, err := httputil.DumpResponse(res, true)
-	assert.NoError(t, err)
-	dif(t, `
-		HTTP/1.1 200 OK
-		Connection: close
-		Content-Type: application/json
-
-		{"result":{"goodbye":"adios matt mueller!"}}
-	`, string(buf))
-}
-
-func TestPostSpread(t *testing.T) {
-	api := koi.New()
-
-	type Input struct {
-		Hello string `json:"hello,omitempty" validate:"required"`
-	}
-
-	type Output struct {
-		Goodbye string `json:"goodbye,omitempty"`
-	}
-
-	api.Post("/*name", func(r *koi.Request, v Input) (o Output, e error) {
-		assert.Equal(t, v.Hello, "hola")
-		o.Goodbye = fmt.Sprintf("adios %s!", r.Param("name"))
-		return o, nil
-	})
-
-	r := req("POST", "/matt/mueller", `{"hello":"hola"}`)
-	w := httptest.NewRecorder()
-	api.ServeHTTP(w, r)
-	res := w.Result()
-	buf, err := httputil.DumpResponse(res, true)
-	assert.NoError(t, err)
-	dif(t, `
-		HTTP/1.1 200 OK
-		Connection: close
-		Content-Type: application/json
-
-		{"result":{"goodbye":"adios /matt/mueller!"}}
-	`, string(buf))
-}
-
-func TestExample(t *testing.T) {
-	router := httprouter.New()
-	handle := router.HandlerFunc
-	koi := koi.New()
-
-	type Input struct {
-		Hello string `json:"hello,omitempty" validate:"required"`
-	}
-
-	type Output struct {
-		Goodbye string `json:"goodbye,omitempty"`
-	}
-
-	handle("POST", "/", koi.Wrap(func(v Input) (o Output, e error) {
-		assert.Equal(t, v.Hello, "hola")
-		o.Goodbye = "adios!"
-		return o, nil
-	}))
-
-	r := req("POST", "/", `{"hello":"hola"}`)
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, r)
-	res := w.Result()
-	buf, err := httputil.DumpResponse(res, true)
-	assert.NoError(t, err)
-	dif(t, `
-		HTTP/1.1 200 OK
-		Connection: close
-		Content-Type: application/json
-
-		{"result":{"goodbye":"adios!"}}
-	`, string(buf))
 }
 
 // diff two results
-func dif(t testing.TB, expected, actual string) {
+func difference(t testing.TB, expected, actual string) {
 	expected = strings.Replace(strings.TrimSpace(dedent.Dedent(expected)), "\n", "\r\n", -1)
 	actual = strings.TrimSpace(dedent.Dedent(actual))
 
