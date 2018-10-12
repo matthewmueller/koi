@@ -2,6 +2,7 @@ package koi_test
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -349,20 +350,19 @@ func TestWrap(t *testing.T) {
 		`,
 		},
 		{
-			name:    "invalid input",
-			request: req("POST", "/matt", `{"hello":""}`),
+			name:    "json.RawMessage",
+			request: req("POST", "/matt", `{"hello":"hi"}`),
 			test: func(t *testing.T) http.HandlerFunc {
-				return koi.New().Wrap(func(v struct {
-					Hello string `validate:"required"`
-				}) {
+				return koi.New().Wrap(func(in json.RawMessage) json.RawMessage {
+					return in
 				})
 			},
 			expected: `
-			HTTP/1.1 400 Bad Request
+			HTTP/1.1 200 OK
 			Connection: close
 			Content-Type: application/json
 
-			{"type":"invalid_input","message":"Key: 'Hello' Error:Field validation for 'Hello' failed on the 'required' tag"}
+			{"hello":"hi"}
 		`,
 		},
 		// {

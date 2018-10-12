@@ -11,8 +11,17 @@ import (
 	"reflect"
 
 	"github.com/julienschmidt/httprouter"
+)
 
-	validator "gopkg.in/go-playground/validator.v9"
+var (
+	// errorInterface is the error interface.
+	errorInterface = reflect.TypeOf((*error)(nil)).Elem()
+
+	// contextInterface is the context interface.
+	contextInterface = reflect.TypeOf((*context.Context)(nil)).Elem()
+
+	// unmarshaler interface is the json.Unmarshaler interface.
+	unmarshalerInterface = reflect.TypeOf((*json.Unmarshaler)(nil)).Elem()
 )
 
 type route struct {
@@ -41,9 +50,8 @@ func (r *Request) Param(name string) string {
 
 // options for koi
 type options struct {
-	Read     func(r io.Reader) ([]byte, error)
-	Validate func(s interface{}) error
-	Write    func(w http.ResponseWriter, v interface{}) error
+	Read  func(r io.Reader) ([]byte, error)
+	Write func(w http.ResponseWriter, v interface{}) error
 }
 
 // Option for koi
@@ -54,14 +62,6 @@ type Option func(*options)
 func Read(fn func(r io.Reader) ([]byte, error)) Option {
 	return func(opts *options) {
 		opts.Read = fn
-	}
-}
-
-// Validator sets a custom input validator. Defaults to using
-// "gopkg.in/go-playground/validator.v9".Struct
-func Validator(fn func(s interface{}) error) Option {
-	return func(opts *options) {
-		opts.Validate = fn
 	}
 }
 
@@ -113,9 +113,8 @@ type Koi struct {
 func New(opts ...func(*options)) *Koi {
 	r := httprouter.New()
 	o := &options{
-		Read:     ioutil.ReadAll,
-		Validate: validator.New().Struct,
-		Write:    write,
+		Read:  ioutil.ReadAll,
+		Write: write,
 	}
 	for _, opt := range opts {
 		opt(o)
@@ -182,9 +181,9 @@ func (k *Koi) route(fn reflect.Value) *route {
 			r.context = true
 			continue
 		}
-		if unroll(arg).Kind() == reflect.Struct {
+
+		if unroll(arg).Kind() == reflect.Struct || unmarshalable(arg) {
 			r.param = arg
-			continue
 		}
 	}
 
@@ -332,10 +331,6 @@ func (k *Koi) respond(route *route, w http.ResponseWriter, r *http.Request, p ht
 			k.o.Write(w, NewError(400, "malformed_request", fmt.Sprintf("invalid body, expected %s", jsonTypeName(route.param))))
 			return
 		}
-		if err := validate(route.param, stct, k.o.Validate); err != nil {
-			k.o.Write(w, NewError(400, "invalid_input", err.Error()))
-			return
-		}
 		params = append(params, stct.Elem())
 	}
 
@@ -392,31 +387,6 @@ func (w *bufferedWriter) Write(b []byte) (n int, err error) {
 	return len(b), nil
 }
 
-func validate(t reflect.Type, v reflect.Value, check func(s interface{}) error) error {
-	switch t.Kind() {
-	case reflect.Struct:
-		return check(v.Interface())
-	case reflect.Ptr:
-		return validate(unroll(t), v.Elem(), check)
-	case reflect.Slice, reflect.Array:
-		for i := 0; i < v.Elem().Len(); i++ {
-			item := v.Elem().Index(i)
-			if err := validate(item.Type(), item, check); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
-
-var (
-	// errorInterface is the error interface.
-	errorInterface = reflect.TypeOf((*error)(nil)).Elem()
-
-	// contextInterface is the context interface.
-	contextInterface = reflect.TypeOf((*context.Context)(nil)).Elem()
-)
-
 // isError returns true if v implements the error interface.
 func isError(v reflect.Value) bool {
 	return v.Type().Implements(errorInterface)
@@ -450,6 +420,14 @@ func unroll(t reflect.Type) reflect.Type {
 		t = t.Elem()
 	}
 	return t
+}
+
+func unmarshalable(t reflect.Type) bool {
+	if t.Kind() == reflect.Ptr {
+		return t.Implements(unmarshalerInterface)
+	}
+	ptr := reflect.PtrTo(t)
+	return ptr.Implements(unmarshalerInterface)
 }
 
 // Error is an koi error.
