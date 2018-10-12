@@ -10,7 +10,7 @@ Simple router and middleware.
 api := koi.New()
 
 type Input struct {
-  Hello string `json:"hello,omitempty" validate:"required"`
+  Hello string `json:"hello,omitempty"`
 }
 
 type Output struct {
@@ -31,7 +31,7 @@ http.ListenAndServe(":3000", api)
 api := koi.New()
 
 type Input struct {
-  Hello string `json:"hello,omitempty" validate:"required"`
+  Hello string `json:"hello,omitempty"`
 }
 
 type Output struct {
@@ -58,7 +58,7 @@ http.ListenAndServe(":3000", api)
 api := koi.New()
 
 type Input struct {
-  Hello string `json:"hello,omitempty" validate:"required"`
+  Hello string `json:"hello,omitempty"`
 }
 
 type Output struct {
@@ -81,7 +81,7 @@ handle := router.HandlerFunc
 koi := koi.New()
 
 type Input struct {
-  Hello string `json:"hello,omitempty" validate:"required"`
+  Hello string `json:"hello,omitempty"`
 }
 
 type Output struct {
