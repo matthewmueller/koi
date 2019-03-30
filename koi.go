@@ -9,8 +9,6 @@ import (
 	"io/ioutil"
 	"net/http"
 	"reflect"
-
-	"github.com/julienschmidt/httprouter"
 )
 
 var (
@@ -25,51 +23,15 @@ var (
 )
 
 type route struct {
-	fn         reflect.Value
-	numIn      int
-	numOut     int
-	param      reflect.Type
-	result     reflect.Type
-	error      bool
-	request    bool
-	koiRequest bool
-	response   bool
-	context    bool
-}
-
-// Request that includes parameters
-type Request struct {
-	*http.Request
-	params httprouter.Params
-}
-
-// Param returns a url parameter
-func (r *Request) Param(name string) string {
-	return r.params.ByName(name)
-}
-
-// options for koi
-type options struct {
-	Read  func(r io.Reader) ([]byte, error)
-	Write func(w http.ResponseWriter, v interface{}) error
-}
-
-// Option for koi
-type Option func(*options)
-
-// Read option allows you to customize how the body
-// is read. Defaults to ioutil.ReadAll(r.Body)
-func Read(fn func(r io.Reader) ([]byte, error)) Option {
-	return func(opts *options) {
-		opts.Read = fn
-	}
-}
-
-// Write option customizes how to write the data back
-func Write(fn func(w http.ResponseWriter, v interface{}) error) Option {
-	return func(opts *options) {
-		opts.Write = fn
-	}
+	fn       reflect.Value
+	numIn    int
+	numOut   int
+	param    reflect.Type
+	result   reflect.Type
+	error    bool
+	request  bool
+	response bool
+	context  bool
 }
 
 // default write function
@@ -102,60 +64,23 @@ func write(w http.ResponseWriter, v interface{}) error {
 	return nil
 }
 
+// New koi with optional middleware
+func New(middleware ...Middleware) *Koi {
+	return &Koi{
+		Middleware: compose(middleware...),
+		Read:       ioutil.ReadAll,
+		Write:      write,
+	}
+}
+
+// Middleware for Koi
+type Middleware func(next http.Handler) http.Handler
+
 // Koi struct
 type Koi struct {
-	http.Handler
-	router *httprouter.Router
-	o      *options
-}
-
-// New koi middleware
-func New(opts ...func(*options)) *Koi {
-	r := httprouter.New()
-	o := &options{
-		Read:  ioutil.ReadAll,
-		Write: write,
-	}
-	for _, opt := range opts {
-		opt(o)
-	}
-	return &Koi{r, r, o}
-}
-
-// Get handles GET requests to path
-func (k *Koi) Get(path string, handler ...interface{}) *Koi {
-	k.router.Handle("GET", path, k.wrap(handler))
-	return k
-}
-
-// Post handles POST requests to path
-func (k *Koi) Post(path string, handler ...interface{}) *Koi {
-	k.router.Handle("POST", path, k.wrap(handler))
-	return k
-}
-
-// Put handles PUT requests to path
-func (k *Koi) Put(path string, handler ...interface{}) *Koi {
-	k.router.Handle("PUT", path, k.wrap(handler))
-	return k
-}
-
-// Patch handles PATCH requests to path
-func (k *Koi) Patch(path string, handler ...interface{}) *Koi {
-	k.router.Handle("PATCH", path, k.wrap(handler))
-	return k
-}
-
-// Delete handles DELETE requests to path
-func (k *Koi) Delete(path string, handler ...interface{}) *Koi {
-	k.router.Handle("DELETE", path, k.wrap(handler))
-	return k
-}
-
-// Head handles HEAD requests to path
-func (k *Koi) Head(path string, handler ...interface{}) *Koi {
-	k.router.Handle("HEAD", path, k.wrap(handler))
-	return k
+	Middleware Middleware
+	Read       func(r io.Reader) ([]byte, error)
+	Write      func(w http.ResponseWriter, v interface{}) error
 }
 
 func (k *Koi) route(fn reflect.Value) *route {
@@ -173,9 +98,6 @@ func (k *Koi) route(fn reflect.Value) *route {
 			continue
 		case "*http.Request":
 			r.request = true
-			continue
-		case "*koi.Request":
-			r.koiRequest = true
 			continue
 		case "context.Context":
 			r.context = true
@@ -204,111 +126,37 @@ func (k *Koi) route(fn reflect.Value) *route {
 	return r
 }
 
-type handle func(w http.ResponseWriter, r *http.Request, next http.HandlerFunc)
-
-// Compose the handlers
-func compose(fns ...handle) (next http.HandlerFunc) {
-	next = func(w http.ResponseWriter, r *http.Request) {}
-	for i := len(fns) - 1; i >= 0; i-- {
-		i := i
-		prev := next
-		called := false
-		next = func(w http.ResponseWriter, r *http.Request) {
-			if called {
-				return
-			}
-			called = true
-			fns[i](w, r, prev)
-			prev(w, r)
+// compose multiple middleware into one
+func compose(mm ...Middleware) Middleware {
+	return func(h http.Handler) http.Handler {
+		if len(mm) == 0 {
+			return h
 		}
-	}
-	return next
-}
-
-func (k *Koi) middleware(handler interface{}) handle {
-	fn := reflect.ValueOf(handler)
-	if fn.Kind() != reflect.Func {
-		panic("middleware must be a function")
-	}
-	t := fn.Type()
-	n := t.NumIn()
-	return func(w http.ResponseWriter, r *http.Request, next http.HandlerFunc) {
-		params := make([]reflect.Value, n)
-		switch n {
-		case 0:
-			fn.Call(params)
-		case 1:
-			params[0] = reflect.ValueOf(w)
-			fn.Call(params)
-		case 2:
-			params[0] = reflect.ValueOf(w)
-			params[1] = reflect.ValueOf(r)
-			fn.Call(params)
-		default:
-			params[0] = reflect.ValueOf(w)
-			params[1] = reflect.ValueOf(r)
-			params[2] = reflect.ValueOf(next)
-			fn.Call(params)
+		for i := len(mm) - 1; i >= 0; i-- {
+			h = mm[i](h)
 		}
-	}
-}
-
-func (k *Koi) wrap(handlers []interface{}) httprouter.Handle {
-	var (
-		middlewares []interface{}
-		handler     interface{}
-	)
-	switch len(handlers) {
-	case 0:
-		panic("method must have atleast one handler")
-	case 1:
-		handler = handlers[0]
-	default:
-		l := len(handlers) - 1
-		middlewares = handlers[0:l]
-		handler = handlers[l]
-	}
-
-	var fns []handle
-	if len(middlewares) > 0 {
-		for _, middleware := range middlewares {
-			fns = append(fns, k.middleware(middleware))
-		}
-	}
-
-	fn := reflect.ValueOf(handler)
-	if fn.Kind() != reflect.Func {
-		panic("not a function")
-	}
-	route := k.route(fn)
-
-	return func(w http.ResponseWriter, r *http.Request, p httprouter.Params) {
-		fn := func(w http.ResponseWriter, r *http.Request, next http.HandlerFunc) { k.respond(route, w, r, p) }
-		fns = append(fns, fn)
-		compose(fns...)(w, r)
+		return h
 	}
 }
 
 // Wrap the handler in middleware
-func (k *Koi) Wrap(handler interface{}) http.HandlerFunc {
+func (k *Koi) Wrap(handler interface{}) http.Handler {
 	fn := reflect.ValueOf(handler)
 	if fn.Kind() != reflect.Func {
 		panic("not a function")
 	}
-
 	route := k.route(fn)
-
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-
-		k.respond(route, w, r, nil)
+	handle := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		k.respond(route, w, r)
 	})
+	return k.Middleware(handle)
 }
 
-func (k *Koi) respond(route *route, w http.ResponseWriter, r *http.Request, p httprouter.Params) {
+func (k *Koi) respond(route *route, w http.ResponseWriter, r *http.Request) {
 	// read the request body
-	body, err := k.o.Read(r.Body)
+	body, err := k.Read(r.Body)
 	if err != nil {
-		k.o.Write(w, NewError(400, "malformed_request", "Request body must be present"))
+		k.Write(w, NewError(400, "malformed_request", "Request body must be present"))
 		return
 	}
 	r.Body.Close()
@@ -322,13 +170,10 @@ func (k *Koi) respond(route *route, w http.ResponseWriter, r *http.Request, p ht
 	if route.request {
 		params = append(params, reflect.ValueOf(r))
 	}
-	if route.koiRequest {
-		params = append(params, reflect.ValueOf(&Request{r, p}))
-	}
 	if route.param != nil {
 		stct := reflect.New(route.param)
 		if err := json.Unmarshal(body, stct.Interface()); err != nil {
-			k.o.Write(w, NewError(400, "malformed_request", fmt.Sprintf("invalid body, expected %s", jsonTypeName(route.param))))
+			k.Write(w, NewError(400, "malformed_request", fmt.Sprintf("invalid body, expected %s", jsonTypeName(route.param))))
 			return
 		}
 		params = append(params, stct.Elem())
@@ -336,7 +181,7 @@ func (k *Koi) respond(route *route, w http.ResponseWriter, r *http.Request, p ht
 
 	// TODO: we should be able to catch this on startup
 	if route.numIn != len(params) {
-		k.o.Write(w, NewError(500, "bad_handler_signature", "handler function parameter mismatch"))
+		k.Write(w, NewError(500, "bad_handler_signature", "handler function parameter mismatch"))
 		return
 	}
 
@@ -354,7 +199,7 @@ func (k *Koi) respond(route *route, w http.ResponseWriter, r *http.Request, p ht
 	if errValue.IsValid() && !errValue.IsNil() {
 		w.Header().Set("Content-Type", "application/json")
 		e := errValue.Interface().(error)
-		k.o.Write(w, e)
+		k.Write(w, e)
 		return
 	}
 
@@ -374,7 +219,7 @@ func (k *Koi) respond(route *route, w http.ResponseWriter, r *http.Request, p ht
 		out = resValue.Interface()
 	}
 
-	k.o.Write(w, out)
+	k.Write(w, out)
 }
 
 type bufferedWriter struct {

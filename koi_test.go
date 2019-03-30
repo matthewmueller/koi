@@ -4,13 +4,13 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/http/httputil"
 	"strings"
 	"testing"
 
+	"github.com/bmizerany/pat"
 	"github.com/matthewmueller/diff"
 	"github.com/matthewmueller/koi"
 	"github.com/renstrom/dedent"
@@ -38,14 +38,15 @@ func TestWrap(t *testing.T) {
 	var tests = []struct {
 		name     string
 		request  *http.Request
-		test     func(t *testing.T) http.HandlerFunc
+		test     func(t *testing.T) http.Handler
 		expected string
 	}{
 		{
-			name:    "v->",
+			name:    "fn(value)",
 			request: req("POST", "/", `{"hello":"hi"}`),
-			test: func(t *testing.T) http.HandlerFunc {
-				return koi.New().Wrap(func(v struct{ Hello string }) {
+			test: func(t *testing.T) http.Handler {
+				k := koi.New()
+				return k.Wrap(func(v struct{ Hello string }) {
 					assert.Equal(t, v.Hello, "hi")
 				})
 			},
@@ -60,9 +61,10 @@ func TestWrap(t *testing.T) {
 		{
 			name:    "method test",
 			request: req("POST", "/", `{"hello":"hi"}`),
-			test: func(t *testing.T) http.HandlerFunc {
+			test: func(t *testing.T) http.Handler {
 				a := &A{t: t, Name: "Matt"}
-				return koi.New().Wrap(a.Hello)
+				k := koi.New()
+				return k.Wrap(a.Hello)
 			},
 			expected: `
 			HTTP/1.1 200 OK
@@ -73,10 +75,11 @@ func TestWrap(t *testing.T) {
 		`,
 		},
 		{
-			name:    "v->e",
+			name:    "fn(val) err",
 			request: req("POST", "/", `{"hello":"hi"}`),
-			test: func(t *testing.T) http.HandlerFunc {
-				return koi.New().Wrap(func(v struct{ Hello string }) error {
+			test: func(t *testing.T) http.Handler {
+				k := koi.New()
+				return k.Wrap(func(v struct{ Hello string }) error {
 					assert.Equal(t, v.Hello, "hi")
 					return nil
 				})
@@ -92,8 +95,9 @@ func TestWrap(t *testing.T) {
 		{
 			name:    "returns error",
 			request: req("POST", "/", `{"hello":"hi"}`),
-			test: func(t *testing.T) http.HandlerFunc {
-				return koi.New().Wrap(func(v struct{ Hello string }) error {
+			test: func(t *testing.T) http.Handler {
+				k := koi.New()
+				return k.Wrap(func(v struct{ Hello string }) error {
 					assert.Equal(t, v.Hello, "hi")
 					return errors.New("oh noz")
 				})
@@ -107,10 +111,11 @@ func TestWrap(t *testing.T) {
 		`,
 		},
 		{
-			name:    "v->r,e",
+			name:    "fn(in) (out, err)",
 			request: req("POST", "/", `{"hello":"hi"}`),
-			test: func(t *testing.T) http.HandlerFunc {
-				return koi.New().Wrap(func(v struct{ Hello string }) (r string, e error) {
+			test: func(t *testing.T) http.Handler {
+				k := koi.New()
+				return k.Wrap(func(v struct{ Hello string }) (r string, e error) {
 					return v.Hello, nil
 				})
 			},
@@ -123,10 +128,11 @@ func TestWrap(t *testing.T) {
 		`,
 		},
 		{
-			name:    "v->r,e with error",
+			name:    "fn(in) (out, err) with error",
 			request: req("POST", "/", `{"hello":"hi"}`),
-			test: func(t *testing.T) http.HandlerFunc {
-				return koi.New().Wrap(func(v struct{ Hello string }) (r string, e error) {
+			test: func(t *testing.T) http.Handler {
+				k := koi.New()
+				return k.Wrap(func(v struct{ Hello string }) (r string, e error) {
 					return v.Hello, errors.New("Oh noz.")
 				})
 			},
@@ -139,10 +145,11 @@ func TestWrap(t *testing.T) {
 		`,
 		},
 		{
-			name:    "v->r,e with input ptr",
+			name:    "fn(*in) (result, err)",
 			request: req("POST", "/", `{"hello":null}`),
-			test: func(t *testing.T) http.HandlerFunc {
-				return koi.New().Wrap(func(v *struct{ Hello string }) (r string, e error) {
+			test: func(t *testing.T) http.Handler {
+				k := koi.New()
+				return k.Wrap(func(v *struct{ Hello string }) (r string, e error) {
 					return v.Hello, nil
 				})
 			},
@@ -155,10 +162,11 @@ func TestWrap(t *testing.T) {
 		`,
 		},
 		{
-			name:    "v->r,e with output ptr",
+			name:    "fn(*in) (*result, error)",
 			request: req("POST", "/", `{"hello":"hi"}`),
-			test: func(t *testing.T) http.HandlerFunc {
-				return koi.New().Wrap(func(v *struct{ Hello string }) (r *string, e error) {
+			test: func(t *testing.T) http.Handler {
+				k := koi.New()
+				return k.Wrap(func(v *struct{ Hello string }) (r *string, e error) {
 					return &v.Hello, nil
 				})
 			},
@@ -171,10 +179,11 @@ func TestWrap(t *testing.T) {
 		`,
 		},
 		{
-			name:    "w,r->",
+			name:    "fn(res, req)",
 			request: req("POST", "/", `{"hello":"hi"}`),
-			test: func(t *testing.T) http.HandlerFunc {
-				return koi.New().Wrap(func(w http.ResponseWriter, r *http.Request) {
+			test: func(t *testing.T) http.Handler {
+				k := koi.New()
+				return k.Wrap(func(w http.ResponseWriter, r *http.Request) {
 					w.Header().Add("x-test", "machina")
 					w.Write([]byte(r.Method))
 				})
@@ -189,10 +198,11 @@ func TestWrap(t *testing.T) {
 		`,
 		},
 		{
-			name:    "w,r->e",
+			name:    "fn(res, req) err",
 			request: req("POST", "/", `{"hello":"hi"}`),
-			test: func(t *testing.T) http.HandlerFunc {
-				return koi.New().Wrap(func(w http.ResponseWriter, r *http.Request) error {
+			test: func(t *testing.T) http.Handler {
+				k := koi.New()
+				return k.Wrap(func(w http.ResponseWriter, r *http.Request) error {
 					w.Header().Add("x-test", "machina")
 					w.Write([]byte(r.Method))
 					return nil
@@ -208,10 +218,11 @@ func TestWrap(t *testing.T) {
 		`,
 		},
 		{
-			name:    "w,r->e with error",
+			name:    "fn(res, req) err: with error",
 			request: req("POST", "/", `{"hello":"hi"}`),
-			test: func(t *testing.T) http.HandlerFunc {
-				return koi.New().Wrap(func(w http.ResponseWriter, r *http.Request) error {
+			test: func(t *testing.T) http.Handler {
+				k := koi.New()
+				return k.Wrap(func(w http.ResponseWriter, r *http.Request) error {
 					w.Header().Add("x-test", "machina")
 					w.Write([]byte(r.Method))
 					return errors.New("oh noz")
@@ -227,10 +238,11 @@ func TestWrap(t *testing.T) {
 		`,
 		},
 		{
-			name:    "w,r,v->",
+			name:    "fn(res, req, in)",
 			request: req("POST", "/", `{"hello":"hi"}`),
-			test: func(t *testing.T) http.HandlerFunc {
-				return koi.New().Wrap(func(w http.ResponseWriter, r *http.Request, v struct{ Hello string }) {
+			test: func(t *testing.T) http.Handler {
+				k := koi.New()
+				return k.Wrap(func(w http.ResponseWriter, r *http.Request, v struct{ Hello string }) {
 					w.Header().Add("x-test", "machina")
 					w.Write([]byte(r.Method + " " + v.Hello))
 				})
@@ -245,10 +257,11 @@ func TestWrap(t *testing.T) {
 		`,
 		},
 		{
-			name:    "w,r,v->e",
+			name:    "fn(res, req, in) err",
 			request: req("POST", "/", `{"hello":"hi"}`),
-			test: func(t *testing.T) http.HandlerFunc {
-				return koi.New().Wrap(func(w http.ResponseWriter, r *http.Request, v struct{ Hello string }) error {
+			test: func(t *testing.T) http.Handler {
+				k := koi.New()
+				return k.Wrap(func(w http.ResponseWriter, r *http.Request, v struct{ Hello string }) error {
 					assert.Equal(t, "hi", v.Hello)
 					return nil
 				})
@@ -262,10 +275,11 @@ func TestWrap(t *testing.T) {
 		`,
 		},
 		{
-			name:    "w,r,v->e error beats write",
+			name:    "fn(res, req, in) err: error > write",
 			request: req("POST", "/", `{"hello":"hi"}`),
-			test: func(t *testing.T) http.HandlerFunc {
-				return koi.New().Wrap(func(w http.ResponseWriter, r *http.Request, v struct{ Hello string }) error {
+			test: func(t *testing.T) http.Handler {
+				k := koi.New()
+				return k.Wrap(func(w http.ResponseWriter, r *http.Request, v struct{ Hello string }) error {
 					assert.Equal(t, "hi", v.Hello)
 					w.Write([]byte("whaddup"))
 					return errors.New("oh noz")
@@ -280,10 +294,11 @@ func TestWrap(t *testing.T) {
 		`,
 		},
 		{
-			name:    "w,r,v->r,e result beats write",
+			name:    "fn(res, req, in) (out, err): out > write",
 			request: req("POST", "/", `{"hello":"hi"}`),
-			test: func(t *testing.T) http.HandlerFunc {
-				return koi.New().Wrap(func(w http.ResponseWriter, r *http.Request, v struct{ Hello string }) (s struct{ Ok bool }, err error) {
+			test: func(t *testing.T) http.Handler {
+				k := koi.New()
+				return k.Wrap(func(w http.ResponseWriter, r *http.Request, v struct{ Hello string }) (s struct{ Ok bool }, err error) {
 					w.Header().Add("x-test", "machina")
 					w.Write([]byte(r.Method))
 					s.Ok = true
@@ -297,49 +312,14 @@ func TestWrap(t *testing.T) {
 			X-Test: machina
 
 			{"Ok":true}
-		`,
-		},
-		{
-			name:    "w,r,v->r,e result beats write",
-			request: req("POST", "/", `{"hello":"hi"}`),
-			test: func(t *testing.T) http.HandlerFunc {
-				return koi.New().Wrap(func(w http.ResponseWriter, r *http.Request, v struct{ Hello string }) (s struct{ Ok bool }, err error) {
-					w.Header().Add("x-test", "machina")
-					w.Write([]byte(r.Method))
-					s.Ok = true
-					return s, nil
-				})
-			},
-			expected: `
-			HTTP/1.1 200 OK
-			Connection: close
-			Content-Type: application/json
-			X-Test: machina
-
-			{"Ok":true}
-		`,
-		},
-		{
-			name:    "kr,v->r,e",
-			request: req("POST", "/matt", `{"hello":"hi"}`),
-			test: func(t *testing.T) http.HandlerFunc {
-				return koi.New().Wrap(func(r *koi.Request, v struct{ Hello string }) (string, error) {
-					return r.Method, nil
-				})
-			},
-			expected: `
-			HTTP/1.1 200 OK
-			Connection: close
-			Content-Type: application/json
-
-			"POST"
 		`,
 		},
 		{
 			name:    "malformed",
 			request: req("POST", "/matt", `{hello":"hi"}`),
-			test: func(t *testing.T) http.HandlerFunc {
-				return koi.New().Wrap(func(v struct{ Hello string }) {})
+			test: func(t *testing.T) http.Handler {
+				k := koi.New()
+				return k.Wrap(func(v struct{ Hello string }) {})
 			},
 			expected: `
 			HTTP/1.1 400 Bad Request
@@ -352,8 +332,9 @@ func TestWrap(t *testing.T) {
 		{
 			name:    "json.RawMessage",
 			request: req("POST", "/matt", `{"hello":"hi"}`),
-			test: func(t *testing.T) http.HandlerFunc {
-				return koi.New().Wrap(func(in json.RawMessage) json.RawMessage {
+			test: func(t *testing.T) http.Handler {
+				k := koi.New()
+				return k.Wrap(func(in json.RawMessage) json.RawMessage {
 					return in
 				})
 			},
@@ -365,178 +346,101 @@ func TestWrap(t *testing.T) {
 			{"hello":"hi"}
 		`,
 		},
-		// {
-		// 	name: "(w,r) (e)",
-		// 	fn: func(w http.ResponseWriter, r *http.Request) {
-		// 	},
-		// },
-		// {
-		// 	name: "(w,r) (r,e)",
-		// 	fn: func(w http.ResponseWriter, r *http.Request) {
-		// 	},
-		// },
-		// {
-		// 	name: "(ctx,v) ()",
-		// 	fn:   func(ctx context.Context, v struct{}) {},
-		// },
-		// {
-		// 	name: "(ctx,v) (e)",
-		// },
-		// {
-		// 	name: "(ctx,v) (r,e)",
-		// 	fn: func(ctx context.Context, v struct{}),
-		// },
-		// {
-		// 	name: "(r,v) ()",
-		// },
-		// {
-		// 	name: "(r,v) (e)",
-		// },
-		// {
-		// 	name: "(r,v) (r,e)",
-		// },
-		// {
-		// 	name: "(kr,v) ()",
-		// },
-		// {
-		// 	name: "(kr,v) (e)",
-		// },
-		// {
-		// 	name: "(kr,v) (r,e)",
-		// },
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			fn := test.test(t)
-			w := httptest.NewRecorder()
-			fn(w, test.request)
-			res := w.Result()
-			buf, err := httputil.DumpResponse(res, true)
-			assert.NoError(t, err)
-			difference(t, test.expected, string(buf))
-		})
-	}
-}
-
-func TestHandler(t *testing.T) {
-	var tests = []struct {
-		name     string
-		request  *http.Request
-		test     func(t testing.TB) http.Handler
-		expected string
-	}{
 		{
-			name:    "post /:first/:last",
-			request: req("POST", "/matt/mueller", `{"hello":"hola"}`),
-			test: func(t testing.TB) http.Handler {
-				type Input struct {
-					Hello string `json:"hello,omitempty" validate:"required"`
-				}
-				type Output struct {
-					Goodbye string `json:"goodbye,omitempty"`
-				}
-				return koi.New().Post("/:first/:last", func(r *koi.Request, v Input) (o Output, e error) {
-					assert.Equal(t, v.Hello, "hola")
-					o.Goodbye = fmt.Sprintf("adios %s %s!", r.Param("first"), r.Param("last"))
-					return o, nil
+			name:    "path params to query params",
+			request: req("POST", "/matt/mueller", `{"hello":"hi"}`),
+			test: func(t *testing.T) http.Handler {
+				router := pat.New()
+				k := koi.New()
+				router.Post("/:first/:last", k.Wrap(func(r *http.Request) string {
+					q := r.URL.Query()
+					return q.Get(":first") + " " + q.Get(":last")
+				}))
+				return router
+			},
+			expected: `
+			HTTP/1.1 200 OK
+			Connection: close
+			Content-Type: application/json
+
+			"matt mueller"
+		`,
+		},
+		{
+			name:    "with empty middleware",
+			request: req("POST", "/matt/mueller", `{"hello":"hi"}`),
+			test: func(t *testing.T) http.Handler {
+				k := koi.New(
+					func(next http.Handler) http.Handler {
+						return next
+					},
+					func(next http.Handler) http.Handler {
+						return next
+					},
+				)
+				return k.Wrap(func(r *http.Request) string {
+					return "ok"
 				})
 			},
 			expected: `
-				HTTP/1.1 200 OK
-				Connection: close
-				Content-Type: application/json
+			HTTP/1.1 200 OK
+			Connection: close
+			Content-Type: application/json
 
-				{"goodbye":"adios matt mueller!"}
-			`,
+			"ok"
+		`,
 		},
 		{
-			name:    "post /*name",
-			request: req("POST", "/matt/mueller", `{"hello":"hola"}`),
-			test: func(t testing.TB) http.Handler {
-				type Input struct {
-					Hello string `json:"hello,omitempty" validate:"required"`
-				}
-				type Output struct {
-					Goodbye string `json:"goodbye,omitempty"`
-				}
-				return koi.New().Post("/*name", func(r *koi.Request, v Input) (o Output, e error) {
-					assert.Equal(t, v.Hello, "hola")
-					o.Goodbye = fmt.Sprintf("adios %s!", r.Param("name"))
-					return o, nil
-				})
-			},
-			expected: `
-				HTTP/1.1 200 OK
-				Connection: close
-				Content-Type: application/json
-
-				{"goodbye":"adios /matt/mueller!"}
-			`,
-		},
-		{
-			name:    "post 404",
-			request: req("POST", "/matt/mueller", `{"hello":"hola"}`),
-			test: func(t testing.TB) http.Handler {
-				type Input struct {
-					Hello string `json:"hello,omitempty" validate:"required"`
-				}
-				type Output struct {
-					Goodbye string `json:"goodbye,omitempty"`
-				}
-				return koi.New().Post("/", func(r *koi.Request, v Input) (o Output, e error) {
-					assert.Equal(t, v.Hello, "hola")
-					o.Goodbye = fmt.Sprintf("adios %s!", r.Param("name"))
-					return o, nil
-				})
-			},
-			expected: `
-				HTTP/1.1 404 Not Found
-				Connection: close
-				Content-Type: text/plain; charset=utf-8
-				X-Content-Type-Options: nosniff
-
-				404 page not found
-			`,
-		},
-		{
-			name:    "post / with middleware",
-			request: req("POST", "/", `{"hello":"hola"}`),
-			test: func(t testing.TB) http.Handler {
-				var steps []string
-
-				another := func() {
-					steps = append(steps, "d ->")
-				}
-
-				return koi.New().Post("/",
-					func(w http.ResponseWriter, r *http.Request, next http.HandlerFunc) {
-						steps = append(steps, "a ->")
-						next(w, r)
-						steps = append(steps, "a <-")
-						assert.Equal(t, "a ->, b ->, c ->, d ->, a <-", strings.Join(steps, ", "))
-					},
-					func(w http.ResponseWriter, r *http.Request) {
-						steps = append(steps, "b ->")
-					},
-					func(w http.ResponseWriter) {
-						w.Header().Add("X-cool", "story bro")
-						steps = append(steps, "c ->")
-					},
-					another,
-					func() (s string) {
-						assert.Equal(t, "a ->, b ->, c ->, d ->", strings.Join(steps, ", "))
-						return "hi"
+			name:    "with middleware",
+			request: req("POST", "/matt/mueller", `{"hello":"hi"}`),
+			test: func(t *testing.T) http.Handler {
+				k := koi.New(func(next http.Handler) http.Handler {
+					return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+						w.Header().Add("Content-Type", "application/json")
+						w.Write([]byte(`"lol"`))
 					})
+				})
+				return k.Wrap(func(r *http.Request) string {
+					return "ok"
+				})
 			},
 			expected: `
-				HTTP/1.1 200 OK
-				Connection: close
-				Content-Type: application/json
-				X-Cool: story bro
+			HTTP/1.1 200 OK
+			Connection: close
+			Content-Type: application/json
 
-				"hi"
-			`,
+			"lol"
+		`,
+		},
+		{
+			name:    "with multiple writing middleware",
+			request: req("POST", "/matt/mueller", `{"hello":"hi"}`),
+			test: func(t *testing.T) http.Handler {
+				k := koi.New(
+					func(next http.Handler) http.Handler {
+						return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+							w.Header().Add("Content-Type", "application/json")
+							w.Write([]byte(`{`))
+							next.ServeHTTP(w, r)
+						})
+					},
+					func(next http.Handler) http.Handler {
+						return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+							w.Write([]byte(`}`))
+						})
+					},
+				)
+				return k.Wrap(func(r *http.Request) string {
+					return "ok"
+				})
+			},
+			expected: `
+			HTTP/1.1 200 OK
+			Connection: close
+			Content-Type: application/json
+
+			{}
+		`,
 		},
 	}
 
@@ -548,20 +452,18 @@ func TestHandler(t *testing.T) {
 			res := w.Result()
 			buf, err := httputil.DumpResponse(res, true)
 			assert.NoError(t, err)
-			difference(t, test.expected, string(buf))
+			dif(t, test.expected, string(buf))
 		})
 	}
 }
 
 // diff two results
-func difference(t testing.TB, expected, actual string) {
+func dif(t testing.TB, expected, actual string) {
 	expected = strings.Replace(strings.TrimSpace(dedent.Dedent(expected)), "\n", "\r\n", -1)
 	actual = strings.TrimSpace(dedent.Dedent(actual))
-
 	if expected == actual {
 		return
 	}
-
 	var b bytes.Buffer
 	b.WriteString("\n\x1b[4mExpected\x1b[0m:\n")
 	b.WriteString(expected)
