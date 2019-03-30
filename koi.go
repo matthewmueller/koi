@@ -50,11 +50,13 @@ func write(w http.ResponseWriter, v interface{}) error {
 	}
 
 	// all other errors
+	// TODO: unfold this function call
 	if e, ok := v.(error); ok {
 		return write(w, NewError(500, "", e.Error()))
 	}
 
 	// all other response bodies
+	w.Header().Set("Content-Type", "application/json")
 	b, err := json.Marshal(v)
 	if err != nil {
 		return write(w, NewError(400, "malformed_response", err.Error()))
@@ -146,46 +148,50 @@ func (k *Koi) Wrap(handler interface{}) http.Handler {
 		panic("not a function")
 	}
 	route := k.route(fn)
-	handle := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		k.respond(route, w, r)
-	})
+	handle := &responder{k, route}
 	return k.Middleware(handle)
 }
 
-func (k *Koi) respond(route *route, w http.ResponseWriter, r *http.Request) {
+// responder
+type responder struct {
+	k     *Koi
+	route *route
+}
+
+func (rr *responder) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// read the request body
-	body, err := k.Read(r.Body)
+	body, err := rr.k.Read(r.Body)
 	if err != nil {
-		k.Write(w, NewError(400, "malformed_request", "Request body must be present"))
+		rr.k.Write(w, NewError(400, "malformed_request", "Request body must be present"))
 		return
 	}
 	r.Body.Close()
 
 	bw := bufferedWriter{ResponseWriter: w}
 
-	var params []reflect.Value
-	if route.response {
-		params = append(params, reflect.ValueOf(&bw))
+	// TODO: precompute in responder
+	var arguments []reflect.Value
+	if rr.route.response {
+		arguments = append(arguments, reflect.ValueOf(&bw))
 	}
-	if route.request {
-		params = append(params, reflect.ValueOf(r))
+	if rr.route.request {
+		arguments = append(arguments, reflect.ValueOf(r))
 	}
-	if route.param != nil {
-		stct := reflect.New(route.param)
+	if rr.route.param != nil {
+		stct := reflect.New(rr.route.param)
 		if err := json.Unmarshal(body, stct.Interface()); err != nil {
-			k.Write(w, NewError(400, "malformed_request", fmt.Sprintf("invalid body, expected %s", jsonTypeName(route.param))))
+			rr.k.Write(w, NewError(400, "malformed_request", fmt.Sprintf("invalid body, expected %s", jsonTypeName(rr.route.param))))
 			return
 		}
-		params = append(params, stct.Elem())
+		arguments = append(arguments, stct.Elem())
 	}
-
 	// TODO: we should be able to catch this on startup
-	if route.numIn != len(params) {
-		k.Write(w, NewError(500, "bad_handler_signature", "handler function parameter mismatch"))
+	if rr.route.numIn != len(arguments) {
+		rr.k.Write(w, NewError(500, "bad_handler_signature", "handler function parameter mismatch"))
 		return
 	}
 
-	results := route.fn.Call(params)
+	results := rr.route.fn.Call(arguments)
 	var resValue, errValue reflect.Value
 	for _, v := range results {
 		if isError(v) {
@@ -199,11 +205,11 @@ func (k *Koi) respond(route *route, w http.ResponseWriter, r *http.Request) {
 	if errValue.IsValid() && !errValue.IsNil() {
 		w.Header().Set("Content-Type", "application/json")
 		e := errValue.Interface().(error)
-		k.Write(w, e)
+		rr.k.Write(w, e)
 		return
 	}
 
-	if route.result == nil {
+	if rr.route.result == nil {
 		buffer := bw.buf.Bytes()
 		if len(buffer) > 0 {
 			w.Write(buffer)
@@ -219,7 +225,7 @@ func (k *Koi) respond(route *route, w http.ResponseWriter, r *http.Request) {
 		out = resValue.Interface()
 	}
 
-	k.Write(w, out)
+	rr.k.Write(w, out)
 }
 
 type bufferedWriter struct {
