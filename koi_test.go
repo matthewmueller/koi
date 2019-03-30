@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/http/httputil"
@@ -14,6 +15,7 @@ import (
 	"github.com/matthewmueller/diff"
 	"github.com/matthewmueller/koi"
 	"github.com/renstrom/dedent"
+	"github.com/rs/cors"
 	"github.com/tj/assert"
 )
 
@@ -440,6 +442,39 @@ func TestWrap(t *testing.T) {
 			Content-Type: application/json
 
 			{}
+		`,
+		},
+		{
+			name:    "test example",
+			request: req("POST", "/matt/mueller", `{"hello":"hi"}`),
+			test: func(t *testing.T) http.Handler {
+				crossorigin := cors.AllowAll().Handler
+				k := koi.New(crossorigin)
+				router := pat.New()
+
+				type Input struct {
+					Hello string `json:"hello,omitempty"`
+				}
+
+				type Output struct {
+					Goodbye string `json:"goodbye,omitempty"`
+				}
+
+				router.Post("/:first/:last", k.Wrap(func(r *http.Request, i Input) (o Output, err error) {
+					query := r.URL.Query()
+					o.Goodbye = fmt.Sprintf(`adios %s %s`, query.Get(":first"), query.Get(":last"))
+					return o, nil
+				}))
+
+				return router
+			},
+			expected: `
+			HTTP/1.1 200 OK
+			Connection: close
+			Content-Type: application/json
+			Vary: Origin
+
+			{"goodbye":"adios matt mueller"}
 		`,
 		},
 	}
