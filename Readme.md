@@ -2,7 +2,7 @@
 
 [![](https://godoc.org/github.com/matthewmueller/koi?status.svg)](http://godoc.org/github.com/matthewmueller/koi)
 
-Simple router and middleware.
+Simplify your APIs with this tiny wrapper.
 
 ## Example
 
