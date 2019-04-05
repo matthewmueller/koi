@@ -141,8 +141,8 @@ func compose(mm ...Middleware) Middleware {
 	}
 }
 
-// Wrap the handler in middleware
-func (k *Koi) Wrap(handler interface{}) http.Handler {
+// JSON handler
+func (k *Koi) JSON(handler interface{}) http.Handler {
 	fn := reflect.ValueOf(handler)
 	if fn.Kind() != reflect.Func {
 		panic("not a function")

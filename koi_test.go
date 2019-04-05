@@ -48,7 +48,7 @@ func TestWrap(t *testing.T) {
 			request: req("POST", "/", `{"hello":"hi"}`),
 			test: func(t *testing.T) http.Handler {
 				k := koi.New()
-				return k.Wrap(func(v struct{ Hello string }) {
+				return k.JSON(func(v struct{ Hello string }) {
 					assert.Equal(t, v.Hello, "hi")
 				})
 			},
@@ -66,7 +66,7 @@ func TestWrap(t *testing.T) {
 			test: func(t *testing.T) http.Handler {
 				a := &A{t: t, Name: "Matt"}
 				k := koi.New()
-				return k.Wrap(a.Hello)
+				return k.JSON(a.Hello)
 			},
 			expected: `
 			HTTP/1.1 200 OK
@@ -81,7 +81,7 @@ func TestWrap(t *testing.T) {
 			request: req("POST", "/", `{"hello":"hi"}`),
 			test: func(t *testing.T) http.Handler {
 				k := koi.New()
-				return k.Wrap(func(v struct{ Hello string }) error {
+				return k.JSON(func(v struct{ Hello string }) error {
 					assert.Equal(t, v.Hello, "hi")
 					return nil
 				})
@@ -99,7 +99,7 @@ func TestWrap(t *testing.T) {
 			request: req("POST", "/", `{"hello":"hi"}`),
 			test: func(t *testing.T) http.Handler {
 				k := koi.New()
-				return k.Wrap(func(v struct{ Hello string }) error {
+				return k.JSON(func(v struct{ Hello string }) error {
 					assert.Equal(t, v.Hello, "hi")
 					return errors.New("oh noz")
 				})
@@ -117,7 +117,7 @@ func TestWrap(t *testing.T) {
 			request: req("POST", "/", `{"hello":"hi"}`),
 			test: func(t *testing.T) http.Handler {
 				k := koi.New()
-				return k.Wrap(func(v struct{ Hello string }) (r string, e error) {
+				return k.JSON(func(v struct{ Hello string }) (r string, e error) {
 					return v.Hello, nil
 				})
 			},
@@ -134,7 +134,7 @@ func TestWrap(t *testing.T) {
 			request: req("POST", "/", `{"hello":"hi"}`),
 			test: func(t *testing.T) http.Handler {
 				k := koi.New()
-				return k.Wrap(func(v struct{ Hello string }) (r string, e error) {
+				return k.JSON(func(v struct{ Hello string }) (r string, e error) {
 					return v.Hello, errors.New("Oh noz.")
 				})
 			},
@@ -151,7 +151,7 @@ func TestWrap(t *testing.T) {
 			request: req("POST", "/", `{"hello":null}`),
 			test: func(t *testing.T) http.Handler {
 				k := koi.New()
-				return k.Wrap(func(v *struct{ Hello string }) (r string, e error) {
+				return k.JSON(func(v *struct{ Hello string }) (r string, e error) {
 					return v.Hello, nil
 				})
 			},
@@ -168,7 +168,7 @@ func TestWrap(t *testing.T) {
 			request: req("POST", "/", `{"hello":"hi"}`),
 			test: func(t *testing.T) http.Handler {
 				k := koi.New()
-				return k.Wrap(func(v *struct{ Hello string }) (r *string, e error) {
+				return k.JSON(func(v *struct{ Hello string }) (r *string, e error) {
 					return &v.Hello, nil
 				})
 			},
@@ -185,7 +185,7 @@ func TestWrap(t *testing.T) {
 			request: req("POST", "/", `{"hello":"hi"}`),
 			test: func(t *testing.T) http.Handler {
 				k := koi.New()
-				return k.Wrap(func(w http.ResponseWriter, r *http.Request) {
+				return k.JSON(func(w http.ResponseWriter, r *http.Request) {
 					w.Header().Add("x-test", "machina")
 					w.Write([]byte(r.Method))
 				})
@@ -204,7 +204,7 @@ func TestWrap(t *testing.T) {
 			request: req("POST", "/", `{"hello":"hi"}`),
 			test: func(t *testing.T) http.Handler {
 				k := koi.New()
-				return k.Wrap(func(w http.ResponseWriter, r *http.Request) error {
+				return k.JSON(func(w http.ResponseWriter, r *http.Request) error {
 					w.Header().Add("x-test", "machina")
 					w.Write([]byte(r.Method))
 					return nil
@@ -224,7 +224,7 @@ func TestWrap(t *testing.T) {
 			request: req("POST", "/", `{"hello":"hi"}`),
 			test: func(t *testing.T) http.Handler {
 				k := koi.New()
-				return k.Wrap(func(w http.ResponseWriter, r *http.Request) error {
+				return k.JSON(func(w http.ResponseWriter, r *http.Request) error {
 					w.Header().Add("x-test", "machina")
 					w.Write([]byte(r.Method))
 					return errors.New("oh noz")
@@ -244,7 +244,7 @@ func TestWrap(t *testing.T) {
 			request: req("POST", "/", `{"hello":"hi"}`),
 			test: func(t *testing.T) http.Handler {
 				k := koi.New()
-				return k.Wrap(func(w http.ResponseWriter, r *http.Request, v struct{ Hello string }) {
+				return k.JSON(func(w http.ResponseWriter, r *http.Request, v struct{ Hello string }) {
 					w.Header().Add("x-test", "machina")
 					w.Write([]byte(r.Method + " " + v.Hello))
 				})
@@ -263,7 +263,7 @@ func TestWrap(t *testing.T) {
 			request: req("POST", "/", `{"hello":"hi"}`),
 			test: func(t *testing.T) http.Handler {
 				k := koi.New()
-				return k.Wrap(func(w http.ResponseWriter, r *http.Request, v struct{ Hello string }) error {
+				return k.JSON(func(w http.ResponseWriter, r *http.Request, v struct{ Hello string }) error {
 					assert.Equal(t, "hi", v.Hello)
 					return nil
 				})
@@ -281,7 +281,7 @@ func TestWrap(t *testing.T) {
 			request: req("POST", "/", `{"hello":"hi"}`),
 			test: func(t *testing.T) http.Handler {
 				k := koi.New()
-				return k.Wrap(func(w http.ResponseWriter, r *http.Request, v struct{ Hello string }) error {
+				return k.JSON(func(w http.ResponseWriter, r *http.Request, v struct{ Hello string }) error {
 					assert.Equal(t, "hi", v.Hello)
 					w.Write([]byte("whaddup"))
 					return errors.New("oh noz")
@@ -300,7 +300,7 @@ func TestWrap(t *testing.T) {
 			request: req("POST", "/", `{"hello":"hi"}`),
 			test: func(t *testing.T) http.Handler {
 				k := koi.New()
-				return k.Wrap(func(w http.ResponseWriter, r *http.Request, v struct{ Hello string }) (s struct{ Ok bool }, err error) {
+				return k.JSON(func(w http.ResponseWriter, r *http.Request, v struct{ Hello string }) (s struct{ Ok bool }, err error) {
 					w.Header().Add("x-test", "machina")
 					w.Write([]byte(r.Method))
 					s.Ok = true
@@ -321,7 +321,7 @@ func TestWrap(t *testing.T) {
 			request: req("POST", "/matt", `{hello":"hi"}`),
 			test: func(t *testing.T) http.Handler {
 				k := koi.New()
-				return k.Wrap(func(v struct{ Hello string }) {})
+				return k.JSON(func(v struct{ Hello string }) {})
 			},
 			expected: `
 			HTTP/1.1 400 Bad Request
@@ -336,7 +336,7 @@ func TestWrap(t *testing.T) {
 			request: req("POST", "/matt", `{"hello":"hi"}`),
 			test: func(t *testing.T) http.Handler {
 				k := koi.New()
-				return k.Wrap(func(in json.RawMessage) json.RawMessage {
+				return k.JSON(func(in json.RawMessage) json.RawMessage {
 					return in
 				})
 			},
@@ -354,7 +354,7 @@ func TestWrap(t *testing.T) {
 			test: func(t *testing.T) http.Handler {
 				router := pat.New()
 				k := koi.New()
-				router.Post("/:first/:last", k.Wrap(func(r *http.Request) string {
+				router.Post("/:first/:last", k.JSON(func(r *http.Request) string {
 					q := r.URL.Query()
 					return q.Get(":first") + " " + q.Get(":last")
 				}))
@@ -380,7 +380,7 @@ func TestWrap(t *testing.T) {
 						return next
 					},
 				)
-				return k.Wrap(func(r *http.Request) string {
+				return k.JSON(func(r *http.Request) string {
 					return "ok"
 				})
 			},
@@ -402,7 +402,7 @@ func TestWrap(t *testing.T) {
 						w.Write([]byte(`"lol"`))
 					})
 				})
-				return k.Wrap(func(r *http.Request) string {
+				return k.JSON(func(r *http.Request) string {
 					return "ok"
 				})
 			},
@@ -432,7 +432,7 @@ func TestWrap(t *testing.T) {
 						})
 					},
 				)
-				return k.Wrap(func(r *http.Request) string {
+				return k.JSON(func(r *http.Request) string {
 					return "ok"
 				})
 			},
@@ -460,7 +460,7 @@ func TestWrap(t *testing.T) {
 					Goodbye string `json:"goodbye,omitempty"`
 				}
 
-				router.Post("/:first/:last", k.Wrap(func(r *http.Request, i Input) (o Output, err error) {
+				router.Post("/:first/:last", k.JSON(func(r *http.Request, i Input) (o Output, err error) {
 					query := r.URL.Query()
 					o.Goodbye = fmt.Sprintf(`adios %s %s`, query.Get(":first"), query.Get(":last"))
 					return o, nil
