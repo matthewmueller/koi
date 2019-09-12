@@ -632,6 +632,29 @@ func TestWrap(t *testing.T) {
 			json: cannot unmarshal object into Go value of type string
 		`,
 		},
+		// {
+		// 	name: "nested json",
+		// 	request: func() *http.Request {
+		// 		r := req("POST", "/", `{"GET /":{"body":"hi"}}`)
+		// 		return r
+		// 	},
+		// 	test: func(t *testing.T) http.Handler {
+		// 		k := koi.New()
+		// 		return k.Wrap(func(w http.ResponseWriter, r *http.Request) {
+		// 			body, err := ioutil.ReadAll(r.Body)
+		// 			assert.NoError(t, err)
+		// 			assert.NotEmpty(t, body)
+		// 			w.Write(body)
+		// 		})
+		// 	},
+		// 	expected: `
+		// 	HTTP/1.1 200 OK
+		// 	Connection: close
+		// 	Content-Type: text/plain; charset=utf-8
+
+		// 	{"GET /":{"body":"hi"}}
+		// `,
+		// },
 	}
 
 	for _, test := range tests {
