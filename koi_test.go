@@ -632,6 +632,7 @@ func TestWrap(t *testing.T) {
 			json: cannot unmarshal object into Go value of type string
 		`,
 		},
+		// TODO: fix to resolve #8
 		// {
 		// 	name: "nested json",
 		// 	request: func() *http.Request {
