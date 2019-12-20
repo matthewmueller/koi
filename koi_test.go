@@ -8,13 +8,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/http/httputil"
-	"strings"
 	"testing"
 
 	"github.com/bmizerany/pat"
 	"github.com/matthewmueller/diff"
 	"github.com/matthewmueller/koi"
-	"github.com/renstrom/dedent"
 	"github.com/rs/cors"
 	"github.com/tj/assert"
 )
@@ -666,27 +664,27 @@ func TestWrap(t *testing.T) {
 			res := w.Result()
 			buf, err := httputil.DumpResponse(res, true)
 			assert.NoError(t, err)
-			dif(t, test.expected, string(buf))
+			diff.TestHTTP(t, test.expected, string(buf))
 		})
 	}
 }
 
-// diff two results
-func dif(t testing.TB, expected, actual string) {
-	expected = strings.Replace(strings.TrimSpace(dedent.Dedent(expected)), "\n", "\r\n", -1)
-	actual = strings.TrimSpace(dedent.Dedent(actual))
-	if expected == actual {
-		return
-	}
-	var b bytes.Buffer
-	b.WriteString("\n\x1b[4mExpected\x1b[0m:\n")
-	b.WriteString(expected)
-	b.WriteString("\n\n")
-	b.WriteString("\x1b[4mActual\x1b[0m: \n")
-	b.WriteString(actual)
-	b.WriteString("\n\n")
-	b.WriteString("\x1b[4mDifference\x1b[0m: \n")
-	b.WriteString(diff.String(expected, actual))
-	b.WriteString("\n")
-	t.Fatal(b.String())
-}
+// // diff two results
+// func dif(t testing.TB, expected, actual string) {
+// 	expected = strings.Replace(strings.TrimSpace(dedent.Dedent(expected)), "\n", "\r\n", -1)
+// 	actual = strings.TrimSpace(dedent.Dedent(actual))
+// 	if expected == actual {
+// 		return
+// 	}
+// 	var b bytes.Buffer
+// 	b.WriteString("\n\x1b[4mExpected\x1b[0m:\n")
+// 	b.WriteString(expected)
+// 	b.WriteString("\n\n")
+// 	b.WriteString("\x1b[4mActual\x1b[0m: \n")
+// 	b.WriteString(actual)
+// 	b.WriteString("\n\n")
+// 	b.WriteString("\x1b[4mDifference\x1b[0m: \n")
+// 	b.WriteString(diff.String(expected, actual))
+// 	b.WriteString("\n")
+// 	t.Fatal(b.String())
+// }
