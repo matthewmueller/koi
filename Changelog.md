@@ -1,4 +1,8 @@
-# 0.0.0 / 2025-08-31
+# 0.0.1 / 2025-08-31
+
+- change up the API
+
+# 0.0.0 / 2019-12-20
 
 - fix go mod and tests
 - add failing test
