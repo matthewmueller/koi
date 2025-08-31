@@ -1,3 +1,7 @@
+# 0.0.2 / 2025-08-31
+
+- add custom validator implementation
+
 # 0.0.1 / 2025-08-31
 
 - change up the API
