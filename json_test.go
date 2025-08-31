@@ -10,6 +10,7 @@ import (
 
 	"github.com/matthewmueller/diff"
 	"github.com/matthewmueller/koi"
+	"github.com/matthewmueller/koi/invalid"
 )
 
 func equal(t testing.TB, h http.Handler, r *http.Request, expect string) {
@@ -144,16 +145,24 @@ func TestJsonPostError(t *testing.T) {
 		Connection: close
 		Content-Type: application/json
 
-		{"error":"Internal Server Error"}
+		{"error":"oh no"}
 	`)
 }
 
-func TestJsonPostValidationError(t *testing.T) {
-	type InOut struct {
-		Email string `json:"email,omitzero" validate:"email,required"`
+type InOut struct {
+	Email string `json:"email,omitzero" validate:"email,required"`
+}
+
+func (in *InOut) Validate() (err error) {
+	if in.Email == "" {
+		err = invalid.Join(err, "email", "is required")
 	}
+	return err
+}
+
+func TestJsonPostValidationError(t *testing.T) {
 	handler := koi.JSON(func(w http.ResponseWriter, r *http.Request, in *InOut) (out *InOut, err error) {
-		return nil, fmt.Errorf("oh no")
+		return in, nil
 	})
 	req := httptest.NewRequest("POST", "/?name=matt", bytes.NewBufferString(`{"age":10}`))
 	equal(t, handler, req, `
@@ -161,6 +170,6 @@ func TestJsonPostValidationError(t *testing.T) {
 		Connection: close
 		Content-Type: application/json
 
-		{"error":"Bad Request"}
+		{"error":"invalid email","fields":{"email":["is required"]}}
 	`)
 }

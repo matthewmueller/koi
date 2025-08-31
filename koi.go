@@ -1,22 +1,11 @@
 package koi
 
-import (
-	"context"
-
-	"github.com/go-playground/validator/v10"
-)
-
-var (
-	valid = validator.New()
-)
-
-// Validate the input struct.
-// TODO: support an override to customize validation.
-var validate = func(ctx context.Context, input any) error {
-	return valid.StructCtx(ctx, input)
+// Validator is an interface for validating input.
+type Validator interface {
+	Validate() error
 }
 
-// Customize the status code returned from an error.
-type statuser interface {
+// Statuser is an interface for customizing the status code of an error.
+type Statuser interface {
 	Status() int
 }

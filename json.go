@@ -3,6 +3,7 @@ package koi
 import (
 	"encoding/json"
 	"net/http"
+	"strconv"
 
 	"github.com/matthewmueller/koi/internal/request"
 )
@@ -15,33 +16,44 @@ func JSON[In, Out any](fn func(w http.ResponseWriter, r *http.Request, in In) (o
 		// Decode the request
 		if err := request.Unmarshal(r, &in); err != nil {
 			status := http.StatusBadRequest
-			if se, ok := err.(statuser); ok {
+			if se, ok := err.(Statuser); ok {
 				status = se.Status()
 			}
 			// TODO return the invalid fields in the error response
-			jsonError(w, http.StatusText(status), status)
+			jsonError(w, err, status)
 			return
 		}
 
-		// Validate the input
-		if err := validate(r.Context(), in); err != nil {
-			status := http.StatusBadRequest
-			if se, ok := err.(statuser); ok {
-				status = se.Status()
+		// Validate the input.
+		// Works for both `func (T) Validate()` and `func (*T) Validate()`
+		if v, ok := any(in).(Validator); ok {
+			if err := v.Validate(); err != nil {
+				status := http.StatusBadRequest
+				if se, ok := err.(Statuser); ok {
+					status = se.Status()
+				}
+				jsonError(w, err, status)
+				return
 			}
-			// TODO: return the invalid fields in the error response
-			jsonError(w, http.StatusText(status), status)
-			return
+		} else if v, ok := any(&in).(Validator); ok {
+			if err := v.Validate(); err != nil {
+				status := http.StatusBadRequest
+				if se, ok := err.(Statuser); ok {
+					status = se.Status()
+				}
+				jsonError(w, err, status)
+				return
+			}
 		}
 
 		// Call the handler
 		out, err := fn(w, r, in)
 		if err != nil {
 			status := http.StatusInternalServerError
-			if se, ok := err.(statuser); ok {
+			if se, ok := err.(Statuser); ok {
 				status = se.Status()
 			}
-			jsonError(w, http.StatusText(status), status)
+			jsonError(w, err, status)
 			return
 		}
 
@@ -49,26 +61,27 @@ func JSON[In, Out any](fn func(w http.ResponseWriter, r *http.Request, in In) (o
 		w.Header().Set("Content-Type", "application/json")
 		if err := json.NewEncoder(w).Encode(out); err != nil {
 			status := http.StatusInternalServerError
-			if se, ok := err.(statuser); ok {
+			if se, ok := err.(Statuser); ok {
 				status = se.Status()
 			}
-			jsonError(w, http.StatusText(status), status)
+			jsonError(w, err, status)
 			return
 		}
 	})
 }
 
-func jsonError(w http.ResponseWriter, msg string, status int) {
+func jsonError(w http.ResponseWriter, err error, status int) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(errorJson{Message: msg})
+	json.NewEncoder(w).Encode(encodableError(err))
 }
 
-type errorJson struct {
-	Message string            `json:"error"`
-	Fields  map[string]string `json:"fields,omitzero"`
-}
-
-func (e *errorJson) Error() string {
-	return e.Message
+func encodableError(err error) json.Marshaler {
+	if err == nil {
+		return nil
+	}
+	if em, ok := err.(json.Marshaler); ok {
+		return em
+	}
+	return json.RawMessage(`{"error":` + strconv.Quote(err.Error()) + `}`)
 }
