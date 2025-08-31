@@ -16,6 +16,7 @@ func TestJoinCreatesNew(t *testing.T) {
 	is.True(errors.Is(err, invalid.ErrInvalid))
 	is.Equal(err.Error(), "invalid email")
 	bytes, err := json.Marshal(err)
+	is.NoErr(err)
 	is.Equal(string(bytes), `{"error":"invalid email","fields":{"email":["is required"]}}`)
 }
 
@@ -27,6 +28,7 @@ func TestJoinAppendsSameField(t *testing.T) {
 	is.True(errors.Is(err, invalid.ErrInvalid))
 	is.Equal(err.Error(), "invalid email")
 	bytes, err := json.Marshal(err)
+	is.NoErr(err)
 	is.Equal(string(bytes), `{"error":"invalid email","fields":{"email":["is required","is invalid"]}}`)
 }
 
@@ -39,6 +41,7 @@ func TestJoinAddsMultipleFields(t *testing.T) {
 	is.True(errors.Is(err, invalid.ErrInvalid))
 	is.Equal(err.Error(), "invalid email and name")
 	bytes, err := json.Marshal(err)
+	is.NoErr(err)
 	is.Equal(string(bytes), `{"error":"invalid email and name","fields":{"email":["is required","is invalid"],"name":["too short"]}}`)
 }
 
@@ -48,5 +51,6 @@ func TestExistingError(t *testing.T) {
 	err = invalid.Join(err, "email", "is required")
 	is.Equal(err.Error(), "invalid email and some other error")
 	bytes, err := json.Marshal(err)
+	is.NoErr(err)
 	is.Equal(string(bytes), `{"error":"invalid email and some other error","fields":{"email":["is required"]}}`)
 }
