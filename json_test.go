@@ -122,12 +122,84 @@ func TestJsonPostPtrInOut(t *testing.T) {
 		return in, nil
 	})
 	req := httptest.NewRequest("POST", "/?name=matt", bytes.NewBufferString(`{"age":10}`))
+	req.Header.Set("Content-Type", "application/json")
 	equal(t, handler, req, `
 		HTTP/1.1 200 OK
 		Connection: close
 		Content-Type: application/json
 
 		{"name":"matt","age":10}
+	`)
+}
+
+func TestJsonPostUnsupportedMediaType(t *testing.T) {
+	type In struct {
+		Name string `json:"name,omitzero"`
+	}
+	handler := koi.JSON(func(w http.ResponseWriter, r *http.Request, in In) (out In, err error) {
+		return in, nil
+	})
+	req := httptest.NewRequest("POST", "/", bytes.NewBufferString("name=matt"))
+	req.Header.Set("Content-Type", "text/plain")
+	equal(t, handler, req, `
+		HTTP/1.1 400 Bad Request
+		Connection: close
+		Content-Type: application/json
+
+		{"error":"unsupported media type \"text/plain\""}
+	`)
+}
+
+func TestJsonPostMissingContentType(t *testing.T) {
+	type In struct {
+		Name string `json:"name,omitzero"`
+	}
+	handler := koi.JSON(func(w http.ResponseWriter, r *http.Request, in In) (out In, err error) {
+		return in, nil
+	})
+	req := httptest.NewRequest("POST", "/", bytes.NewBufferString(`{"name":"matt"}`))
+	equal(t, handler, req, `
+		HTTP/1.1 400 Bad Request
+		Connection: close
+		Content-Type: application/json
+
+		{"error":"unsupported media type"}
+	`)
+}
+
+func TestJsonPostDuplicateJSONField(t *testing.T) {
+	type In struct {
+		Name string `json:"name,omitzero"`
+	}
+	handler := koi.JSON(func(w http.ResponseWriter, r *http.Request, in In) (out In, err error) {
+		return in, nil
+	})
+	req := httptest.NewRequest("POST", "/?name=query", bytes.NewBufferString(`{"name":"body"}`))
+	req.Header.Set("Content-Type", "application/json")
+	equal(t, handler, req, `
+		HTTP/1.1 400 Bad Request
+		Connection: close
+		Content-Type: application/json
+
+		{"error":"duplicate request field \"name\""}
+	`)
+}
+
+func TestJsonPostDuplicateFormField(t *testing.T) {
+	type In struct {
+		Name string `json:"name,omitzero"`
+	}
+	handler := koi.JSON(func(w http.ResponseWriter, r *http.Request, in In) (out In, err error) {
+		return in, nil
+	})
+	req := httptest.NewRequest("POST", "/?name=query", bytes.NewBufferString("name=body"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	equal(t, handler, req, `
+		HTTP/1.1 400 Bad Request
+		Connection: close
+		Content-Type: application/json
+
+		{"error":"duplicate request field \"name\""}
 	`)
 }
 
@@ -140,6 +212,7 @@ func TestJsonPostError(t *testing.T) {
 		return nil, fmt.Errorf("oh no")
 	})
 	req := httptest.NewRequest("POST", "/?name=matt", bytes.NewBufferString(`{"age":10}`))
+	req.Header.Set("Content-Type", "application/json")
 	equal(t, handler, req, `
 		HTTP/1.1 500 Internal Server Error
 		Connection: close
@@ -165,6 +238,7 @@ func TestJsonPostValidationError(t *testing.T) {
 		return in, nil
 	})
 	req := httptest.NewRequest("POST", "/?name=matt", bytes.NewBufferString(`{"age":10}`))
+	req.Header.Set("Content-Type", "application/json")
 	equal(t, handler, req, `
 		HTTP/1.1 400 Bad Request
 		Connection: close

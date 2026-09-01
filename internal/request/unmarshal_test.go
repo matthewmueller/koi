@@ -2,13 +2,112 @@ package request_test
 
 import (
 	"bytes"
+	"errors"
+	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/ajg/form"
 	"github.com/matryer/is"
 	"github.com/matthewmueller/koi/internal/request"
 )
+
+func TestUnsupportedMediaType(t *testing.T) {
+	is := is.New(t)
+	type Input struct{ Name string }
+	input := Input{}
+	r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("name=matt"))
+	r.Header.Set("Content-Type", "text/plain")
+
+	err := request.Unmarshal(r, &input)
+
+	is.True(errors.Is(err, request.ErrUnsupportedMediaType))
+}
+
+func TestMissingContentType(t *testing.T) {
+	is := is.New(t)
+	type Input struct{ Name string }
+	input := Input{}
+	r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"name":"matt"}`))
+
+	err := request.Unmarshal(r, &input)
+
+	is.True(errors.Is(err, request.ErrUnsupportedMediaType))
+}
+
+func TestFormParseError(t *testing.T) {
+	is := is.New(t)
+	type Input struct{ Name string }
+	input := Input{}
+	r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("name=%"))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	err := request.Unmarshal(r, &input)
+
+	is.True(err != nil)
+}
+
+func TestJSONMultipleValues(t *testing.T) {
+	is := is.New(t)
+	type Input struct{ Name string }
+	input := Input{}
+	r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"name":"matt"}{"name":"matthew"}`))
+	r.Header.Set("Content-Type", "application/json")
+
+	err := request.Unmarshal(r, &input)
+
+	is.Equal(err.Error(), "request body must contain a single JSON value")
+}
+
+func TestJSONTrailingData(t *testing.T) {
+	is := is.New(t)
+	type Input struct{ Name string }
+	input := Input{}
+	r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"name":"matt"} nope`))
+	r.Header.Set("Content-Type", "application/json")
+
+	err := request.Unmarshal(r, &input)
+
+	is.True(err != nil)
+}
+
+func TestDuplicateJSONQueryField(t *testing.T) {
+	is := is.New(t)
+	type Input struct{ Name string }
+	input := Input{}
+	r := httptest.NewRequest(http.MethodPost, "/?name=query", strings.NewReader(`{"name":"body"}`))
+	r.Header.Set("Content-Type", "application/json")
+
+	err := request.Unmarshal(r, &input)
+
+	is.True(errors.Is(err, request.ErrDuplicateField))
+}
+
+func TestDuplicateFormQueryField(t *testing.T) {
+	is := is.New(t)
+	type Input struct{ Name string }
+	input := Input{}
+	r := httptest.NewRequest(http.MethodPost, "/?name=query", strings.NewReader("name=body"))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	err := request.Unmarshal(r, &input)
+
+	is.True(errors.Is(err, request.ErrDuplicateField))
+}
+
+func TestJSONSuffixMediaType(t *testing.T) {
+	is := is.New(t)
+	type Input struct{ Name string }
+	input := Input{}
+	r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"name":"matt"}`))
+	r.Header.Set("Content-Type", "application/activity+json")
+
+	err := request.Unmarshal(r, &input)
+
+	is.NoErr(err)
+	is.Equal(input.Name, "matt")
+}
 
 func TestJSONEmpty(t *testing.T) {
 	is := is.New(t)
