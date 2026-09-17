@@ -601,3 +601,98 @@ func TestNestedInput(t *testing.T) {
 	is.Equal(2, in.Op.Params[1].Version)
 	is.Equal(false, in.Op.Params[1].Update)
 }
+
+func TestUnmarshalSources(t *testing.T) {
+	is := is.New(t)
+	type Input struct {
+		ID    int    `json:"id"`
+		Limit int    `json:"per_page"`
+		Name  string `json:"name"`
+	}
+	var input Input
+	r := httptest.NewRequest(http.MethodPost, "/?id=42&per_page=25", strings.NewReader(`{"name":"Alice"}`))
+	r.Header.Set("Content-Type", "application/json")
+	err := request.Unmarshal(r, &input)
+	is.NoErr(err)
+	is.Equal(input.ID, 42)
+	is.Equal(input.Limit, 25)
+	is.Equal(input.Name, "Alice")
+}
+
+func TestUnmarshalPointerForm(t *testing.T) {
+	is := is.New(t)
+	type Input struct {
+		ID   string `json:"id"`
+		Page int    `form:"page_number" json:"page"`
+		Name string `form:"display_name"`
+	}
+	var input *Input
+	r := httptest.NewRequest(http.MethodPost, "/?id=board-1&page_number=2", strings.NewReader("display_name=Alice"))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	err := request.Unmarshal(r, &input)
+	is.NoErr(err)
+	is.Equal(input.ID, "board-1")
+	is.Equal(input.Page, 2)
+	is.Equal(input.Name, "Alice")
+}
+
+func TestUnmarshalInvalidQuery(t *testing.T) {
+	is := is.New(t)
+	var input struct {
+		ID int `json:"id"`
+	}
+	r := httptest.NewRequest(http.MethodGet, "/?id=invalid", nil)
+	err := request.Unmarshal(r, &input)
+	is.True(err != nil)
+}
+
+func TestUnmarshalDuplicate(t *testing.T) {
+	is := is.New(t)
+	var input struct{ Name string }
+	r := httptest.NewRequest(http.MethodPost, "/?name=query", strings.NewReader(`{"name":"body"}`))
+	r.Header.Set("Content-Type", "application/json")
+	err := request.Unmarshal(r, &input)
+	is.True(errors.Is(err, request.ErrDuplicateField))
+}
+
+func TestUnmarshalEmpty(t *testing.T) {
+	is := is.New(t)
+	var input struct{}
+	r := httptest.NewRequest(http.MethodGet, "/", nil)
+	err := request.Unmarshal(r, &input)
+	is.NoErr(err)
+}
+
+func TestUnmarshalQueryIgnored(t *testing.T) {
+	is := is.New(t)
+	var input struct {
+		Name string `form:"-"`
+	}
+	r := httptest.NewRequest(http.MethodGet, "/?name=Alice", nil)
+	err := request.Unmarshal(r, &input)
+	is.NoErr(err)
+	is.Equal(input.Name, "")
+}
+
+func TestUnmarshalFormTagOverridesJSON(t *testing.T) {
+	is := is.New(t)
+	var input struct {
+		Page int `form:"page" json:"-"`
+	}
+	r := httptest.NewRequest(http.MethodGet, "/?page=3", nil)
+	err := request.Unmarshal(r, &input)
+	is.NoErr(err)
+	is.Equal(input.Page, 3)
+}
+
+func TestUnmarshalQueryPointer(t *testing.T) {
+	is := is.New(t)
+	var input struct {
+		ID *int `json:"id"`
+	}
+	r := httptest.NewRequest(http.MethodGet, "/?id=42", nil)
+	err := request.Unmarshal(r, &input)
+	is.NoErr(err)
+	is.True(input.ID != nil)
+	is.Equal(*input.ID, 42)
+}

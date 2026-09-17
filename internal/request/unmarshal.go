@@ -19,22 +19,28 @@ var (
 	ErrDuplicateField       = errors.New("duplicate request field")
 )
 
-// Unmarshal the request data into v
+// Unmarshal decodes query and body values using json and form tags.
+// Routers should include path parameters in the query string.
 func Unmarshal(r *http.Request, v any) error {
-	if r.Method == http.MethodGet {
-		return unmarshalURL(r.URL, v)
-	}
-	bodyFields, err := unmarshalBody(r, v)
+	query, err := url.ParseQuery(r.URL.RawQuery)
 	if err != nil {
-		return err
+		return fmt.Errorf("parse query: %w", err)
 	}
-	queryFields := r.URL.Query()
-	for field := range queryFields {
-		if _, ok := bodyFields[field]; ok {
-			return fmt.Errorf("%w %q", ErrDuplicateField, field)
+	if err := unmarshalValues(v, query); err != nil {
+		return fmt.Errorf("decode query: %w", err)
+	}
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		fields, err := unmarshalBody(r, v)
+		if err != nil {
+			return err
+		}
+		for field := range query {
+			if _, ok := fields[field]; ok {
+				return fmt.Errorf("%w %q", ErrDuplicateField, field)
+			}
 		}
 	}
-	return unmarshalURL(r.URL, v)
+	return nil
 }
 
 func unmarshalBody(r *http.Request, v any) (url.Values, error) {
@@ -61,11 +67,11 @@ func unmarshalBody(r *http.Request, v any) (url.Values, error) {
 	return nil, fmt.Errorf("%w %q", ErrUnsupportedMediaType, mediaType)
 }
 
-func unmarshalURL(u *url.URL, v any) error {
+func unmarshalValues(v any, values url.Values) error {
 	dec := form.NewDecoder(nil)
 	dec.IgnoreCase(true)
 	dec.IgnoreUnknownKeys(true)
-	return dec.DecodeValues(v, u.Query())
+	return dec.DecodeValues(v, values)
 }
 
 func unmarshalForm(r *http.Request, v any) (url.Values, error) {
@@ -74,10 +80,7 @@ func unmarshalForm(r *http.Request, v any) (url.Values, error) {
 			return nil, err
 		}
 	}
-	dec := form.NewDecoder(nil)
-	dec.IgnoreCase(true)
-	dec.IgnoreUnknownKeys(true)
-	if err := dec.DecodeValues(v, r.PostForm); err != nil {
+	if err := unmarshalValues(v, r.PostForm); err != nil {
 		return nil, err
 	}
 	return r.PostForm, nil
