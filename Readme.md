@@ -1,80 +1,194 @@
 # Koi
 
-Koi is a typed request/response layer over `net/http`. Requires Go 1.27
-(with generic methods).
+[![Go Reference](https://pkg.go.dev/badge/github.com/matthewmueller/koi.svg)](https://pkg.go.dev/github.com/matthewmueller/koi)
+
+A minimal, type-safe request/response layer for Go. Controllers choose an outcome;
+Koi handles binding, validation, and HTML/JSON responses.
+
+## Features
+
+- Typed request inputs and response bodies
+- Automatic query, form, and JSON binding
+- Validation with client-facing field errors
+- HTML/JSON negotiation using the request's `Accept` header
+- Pluggable rendering and validation
+- Works with `net/http` routers and middleware
+
+## Install
+
+Requires Go 1.27+ with generic methods.
+
+```sh
+go get github.com/matthewmueller/koi
+```
+
+## Example
 
 ```go
-k := koi.New()
+package main
 
-router := http.NewServeMux()
-router.Handle("POST /boards", k.Create(createBoard).
-    Redirect(func(board Board) string { return "/boards/" + board.ID }))
+import (
+	"context"
+	"log"
+	"net/http"
 
-func createBoard(ctx context.Context, req *koi.Request[CreateBoard]) (res koi.Response[Board]) {
-    board, err := saveBoard(ctx, req.Input)
-    if err != nil {
-        return res.Error(err)
-    }
-    return res.Body(board)
+	"github.com/matthewmueller/koi"
+)
+
+type GreetingInput struct {
+	Name string `form:"name" validate:"required"`
+}
+
+type Greeting struct {
+	Message string `json:"message"`
+}
+
+func greet(ctx context.Context, req *koi.Request[GreetingInput]) (res koi.Response[Greeting]) {
+	return res.Body(Greeting{Message: "Hello, " + req.Input.Name + "!"})
+}
+
+func main() {
+	k := koi.New()
+
+	router := http.NewServeMux()
+	router.Handle("GET /hello", k.Show(greet).View("hello.html"))
+
+	log.Fatal(http.ListenAndServe(":8080", router))
 }
 ```
 
-Controllers return `Response[Out]`. `Body`, `Render`, `Redirect`, `Error`, `Errorf`,
-`Message`, `Status`, and `Header` return a modified copy; return or assign the result.
-The zero response produces 204. `Body(nil)` still counts as a body.
+Create `hello.html`:
+
+```html
+<h1>{{.Message}}</h1>
+```
+
+Visit `/hello?name=Alice` in a browser for HTML, or request JSON:
+
+```sh
+curl -H 'Accept: application/json' 'localhost:8080/hello?name=Alice'
+# {"message":"Hello, Alice!"}
+```
 
 ## Routes
 
-`k.Wrap(handler)` is the primitive. `Index`, `New`, `Show`, `Edit`, `Create`,
-`Update`, and `Delete` use the same pipeline. Create defaults to 201; Delete
-defaults to 204. Use `.View(name)`, `.Status(code)`, and `.Redirect(target)`
-to configure routes. Redirect accepts a string or `func(Out) string`.
-Response-level settings override route settings. Errors default to 500,
-regardless of the route's success status.
+Use `k.Wrap(handler)` for any typed handler, or the resource presets:
+`Index`, `New`, `Show`, `Edit`, `Create`, `Update`, and `Delete`.
+Create defaults to 201; Delete defaults to 204.
 
-Route redirects apply only to HTML success responses. A controller redirect
-without a body applies to both formats; with a body, JSON receives the body.
-Redirects use 303, independently of the normal response status.
+```go
+k.Create(createBoard).
+	Redirect(func(board Board) string {
+		return "/boards/" + board.ID
+	})
+```
 
-## Input and validation
+Successful HTML requests redirect with 303; JSON requests receive the response
+body. Use `koi.Empty` for handlers with no input or output data.
 
-Input binds query parameters and JSON or URL-encoded form bodies using `json`
-and `form` tags. Query and form decoding use `github.com/ajg/form`, which prefers
-`form` tags over `json` tags. Duplicate query/body keys are rejected. Pointer
-input is supported. `koi.Empty` represents no input. Configure an HTML error
-view with `Route.ErrorView`; it receives a `ResponseError` containing the status,
-safe message, and validation fields. JSON errors keep their structured response.
+## Validation and errors
 
-The router is responsible for adding path parameters to the request query
-string. Koi does not read `PathValue` or interpret `path` or `query` tags.
+Use `validate` tags or implement `Validate() koi.Invalid` on your input:
 
-The default validator handles `validate` tags and custom `Validate() koi.Invalid`
-methods. Use `Invalid.Add` to produce safe, client-facing field errors.
-Replace `k.Validator` to customize validation.
-Validation field errors return 422 with an `error` and `fields` object in JSON.
-Validators return `koi.Invalid`, or nil for valid input. Binding failures return 400.
+```go
+func (in *CreateBoard) Validate() koi.Invalid {
+	var invalid koi.Invalid
+	if in.Name == "" {
+		invalid.Add("name", "is required")
+	}
+	return invalid
+}
+```
 
-## HTML and JSON
+Validation failures return 422 with field errors. HTML currently shows an error
+page; flash-and-redirect validation is not yet supported.
 
-`Accept` quality values choose HTML or JSON. Missing headers and ties default
-to JSON; unsupported representations return 406. `req.Accepts("html")` and
-`req.Accepts("json")` check acceptability independently of the chosen format.
-Responses vary on `Accept`. HEAD responses have no body.
+```go
+return res.Status(404).Errorf("board %s was not found", id)
+```
 
-HTML uses the route's view, overridden by `res.Render(name, value)`.
-The default renderer uses `html/template` to parse and execute the filename
-passed to `View` or `Render` on each request. View names must be trusted
-application configuration. Rendering and JSON encoding finish before headers
-are committed, so failures produce a clean 500 response.
+Error details are hidden in production. Use `res.Message("Board not found")` for
+safe public text, or `k.Debug = true` to expose underlying errors during development.
 
-Production errors expose only the HTTP status text. Set `k.Debug = true` to
-expose error details. Logging uses a discard logger by default; assign `k.Log` a `*slog.Logger`
-to record method, path, status, duration, and underlying errors. Configure Koi
-and its routes before serving concurrent requests.
+Configure `Route.ErrorView("error.html")` for a custom HTML error page. Its template
+receives `Status`, `Message`, and `Fields`; otherwise Koi supplies a basic page.
 
-## Initial scope
+## Configuration
 
-This implementation covers ordinary request/response APIs. HTML validation
-currently returns a safe 422 error page. Input persistence and flash-and-redirect
-validation need a session/flash API and are deferred, along with webhooks with
-raw byte input, SSE, WebSockets, streaming, and Raw handlers.
+Replace `k.Renderer` or `k.Validator` to customize rendering and validation.
+The default renderer uses `html/template` files. Assign a `*slog.Logger` to
+`k.Log` to enable request logging, including underlying errors.
+
+## Contributions
+
+Pull requests, bug reports, and feature requests are welcome!
+
+## API reference
+
+### Handlers and requests
+
+```go
+type Handler[In, Out any] func(context.Context, *Request[In]) Response[Out]
+```
+
+`Request[In]` embeds `*http.Request` and provides decoded input through `Input`.
+`req.Accepts("html")` and `req.Accepts("json")` check accepted representations.
+Missing `Accept` headers and equal preferences select JSON.
+
+### Routes
+
+`koi.New()` creates a configured `*Koi`. `k.Wrap(handler)` and each resource
+preset return a `*Route[Out]` implementing `http.Handler`.
+
+| Method | Behavior |
+| --- | --- |
+| `View(name)` | Set the default HTML template filename. |
+| `ErrorView(name)` | Set the HTML error template; failed rendering uses the built-in page. |
+| `Status(code)` | Set the default success status. |
+| `Redirect(target)` | Redirect successful HTML responses; accepts a string or `func(Out) string`. |
+
+Route methods modify the route. Configure routes before serving requests.
+
+### Responses
+
+Response methods return a copy; return or assign their result.
+
+| Method | Behavior |
+| --- | --- |
+| `Body(value)` | Supply typed data for JSON encoding or HTML rendering. |
+| `Render(name, value)` | Supply data and override the HTML template. |
+| `Redirect(target)` | Redirect both formats without a body, or HTML only with a body. |
+| `Error(err)` | Set a failure, defaulting to 500; nil clears it. |
+| `Errorf(format, args...)` | Set a formatted error with `fmt.Errorf`, including `%w` wrapping. |
+| `Message(format, args...)` | Set safe public error text using `fmt.Sprintf`. |
+| `Status(code)` | Override the success or error status. Redirects still use 303. |
+| `Header(name, value)` | Set a response header. |
+
+An empty successful response normally returns 204. Errors take precedence over
+bodies and redirects. `Message` changes the text of a failure; use `Error` or
+`Errorf` to set the failure itself.
+
+### Validation and rendering
+
+`Invalid` is a `map[string][]string`. Its pointer method `Add(field, message)`
+initializes a nil map and appends a message. `Error()` produces a readable summary;
+`MarshalJSON()` encodes the summary and field messages.
+
+```go
+type Validator interface {
+	Validate(any) Invalid
+}
+
+type Renderer interface {
+	Render(context.Context, io.Writer, string, any) error
+}
+
+type ResponseError struct {
+	Status  int
+	Message string
+	Fields  Invalid
+}
+```
+
+Replace `k.Validator` or `k.Renderer` to implement these interfaces. Custom error
+templates receive `*ResponseError`; ordinary templates receive the response body.
