@@ -15,7 +15,7 @@ func TestValidationPointerInput(t *testing.T) {
 		Email string `json:"email" validate:"required,email"`
 	}
 	called := false
-	route := koi.New().Create(func(req *koi.Request[*input]) (res koi.Response[koi.Empty]) {
+	route := koi.New().Wrap(func(req *koi.Request[*input]) (res koi.Response[koi.Empty]) {
 		called = true
 		is.Equal(req.Input.Email, "matt@example.com")
 		return res
@@ -24,7 +24,7 @@ func TestValidationPointerInput(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	route.ServeHTTP(w, req)
-	is.Equal(w.Code, 201)
+	is.Equal(w.Code, 204)
 	is.True(called)
 
 	called = false

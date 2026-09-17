@@ -40,10 +40,8 @@ func New() *Koi {
 	}
 }
 
-// Wrap creates a route that binds query and JSON or form body values into In,
-// validates input, and invokes the controller with the request context. Binding
-// failures return 400; validation errors return 422. The controller is not
-// called when binding or validation fails.
+// Wrap a koi handler as an http.Handler. It unmarshals input, validates it, and
+// negotiates the response.
 func (k *Koi) Wrap[In, Out any](handler Handler[In, Out]) *Route[Out] {
 	return &Route[Out]{k: k, handle: func(r *http.Request) (Response[Out], error) {
 		req := &Request[In]{Request: r}
@@ -55,41 +53,4 @@ func (k *Koi) Wrap[In, Out any](handler Handler[In, Out]) *Route[Out] {
 		}
 		return handler(req), nil
 	}}
-}
-
-// Index configures a resource listing.
-func (k *Koi) Index[In, Out any](h Handler[In, Out]) *Route[Out] {
-	return k.Wrap(h)
-}
-
-// New configures a new-resource form.
-func (k *Koi) New[In, Out any](h Handler[In, Out]) *Route[Out] {
-	return k.Wrap(h)
-}
-
-// Show configures a resource detail route.
-func (k *Koi) Show[In, Out any](h Handler[In, Out]) *Route[Out] {
-	return k.Wrap(h)
-}
-
-// Edit configures an edit-resource form.
-func (k *Koi) Edit[In, Out any](h Handler[In, Out]) *Route[Out] {
-	return k.Wrap(h)
-}
-
-// Create configures resource creation with a default success status of 201.
-// Configure Route.Redirect for an HTML redirect after creation.
-func (k *Koi) Create[In, Out any](h Handler[In, Out]) *Route[Out] {
-	return k.Wrap(h).Status(http.StatusCreated)
-}
-
-// Update configures a resource update.
-func (k *Koi) Update[In, Out any](h Handler[In, Out]) *Route[Out] {
-	return k.Wrap(h)
-}
-
-// Delete configures resource deletion with a default success status of 204.
-// Configure Route.Redirect for an HTML redirect after deletion.
-func (k *Koi) Delete[In, Out any](h Handler[In, Out]) *Route[Out] {
-	return k.Wrap(h).Status(http.StatusNoContent)
 }

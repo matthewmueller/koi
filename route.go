@@ -14,7 +14,7 @@ import (
 )
 
 // Route serves a typed controller as an http.Handler. Create routes through
-// Koi.Wrap or a resource preset. Configuration methods modify and return the
+// Koi.Wrap. Configuration methods modify and return the
 // same route; configure it before serving concurrent requests.
 type Route[Out any] struct {
 	k         *Koi

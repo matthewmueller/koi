@@ -50,7 +50,7 @@ func main() {
 	k := koi.New()
 
 	router := http.NewServeMux()
-	router.Handle("GET /hello", k.Show(greet).View("hello.html"))
+	router.Handle("GET /hello", k.Wrap(greet).View("hello.html"))
 
 	log.Fatal(http.ListenAndServe(":8080", router))
 }
@@ -71,12 +71,12 @@ curl -H 'Accept: application/json' 'localhost:8080/hello?name=Alice'
 
 ## Routes
 
-Use `k.Wrap(handler)` for any typed handler, or the resource presets:
-`Index`, `New`, `Show`, `Edit`, `Create`, `Update`, and `Delete`.
-Create defaults to 201; Delete defaults to 204.
+Use `k.Wrap(handler)` for any typed handler. Set an explicit status when a
+route needs one, then add a view or redirect as needed.
 
 ```go
-k.Create(createBoard).
+	k.Wrap(createBoard).
+	Status(http.StatusCreated).
 	Redirect(func(board Board) string {
 		return "/boards/" + board.ID
 	})
@@ -136,8 +136,8 @@ Missing `Accept` headers and equal preferences select JSON.
 
 ### Routes
 
-`koi.New()` creates a configured `*Koi`. `k.Wrap(handler)` and each resource
-preset return a `*Route[Out]` implementing `http.Handler`.
+`koi.New()` creates a configured `*Koi`. `k.Wrap(handler)` returns a
+`*Route[Out]` implementing `http.Handler`.
 
 | Method | Behavior |
 | --- | --- |
