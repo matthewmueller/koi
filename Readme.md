@@ -19,7 +19,7 @@ func createBoard(ctx context.Context, req *koi.Request[CreateBoard]) (res koi.Re
 }
 ```
 
-Controllers return `Response[Out]`. `Body`, `Render`, `Redirect`, `Error`,
+Controllers return `Response[Out]`. `Body`, `Render`, `Redirect`, `Error`, `Errorf`,
 `Message`, `Status`, and `Header` return a modified copy; return or assign the result.
 The zero response produces 204. `Body(nil)` still counts as a body.
 

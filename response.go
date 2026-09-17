@@ -49,6 +49,12 @@ func (r Response[Out]) Error(err error) Response[Out] {
 	return r
 }
 
+// Errorf formats an error with fmt.Errorf and sets the failure outcome.
+// Like Error, details are hidden unless Koi.Debug is enabled. It supports %w wrapping.
+func (r Response[Out]) Errorf(format string, args ...any) Response[Out] {
+	return r.Error(fmt.Errorf(format, args...))
+}
+
 // Message sets a client-facing failure message while retaining err for logs.
 func (r Response[Out]) Message(format string, args ...any) Response[Out] {
 	r.message = fmt.Sprintf(format, args...)

@@ -150,6 +150,26 @@ func TestErrorPrivacyAndLogging(t *testing.T) {
 	is.Equal(w.Code, 404)
 }
 
+func TestErrorf(t *testing.T) {
+	is := is.New(t)
+	k := koi.New()
+	var logs bytes.Buffer
+	k.Log = slog.New(slog.NewJSONHandler(&logs, nil))
+	route := k.Wrap(func(ctx context.Context, req *koi.Request[koi.Empty]) (res koi.Response[board]) {
+		return res.Status(503).Errorf("load board %d: %w", 42, errors.New("database unavailable"))
+	})
+	w := serve(t, route, "application/json")
+	is.Equal(w.Code, 503)
+	is.Equal(w.Body.String(), "{\"error\":\"Service Unavailable\"}\n")
+	var record map[string]any
+	is.NoErr(json.NewDecoder(&logs).Decode(&record))
+	is.Equal(record["error"], "load board 42: database unavailable")
+	k.Debug = true
+	w = serve(t, route, "application/json")
+	is.Equal(w.Code, 503)
+	is.True(strings.Contains(w.Body.String(), "load board 42: database unavailable"))
+}
+
 func TestMessageFormattingAndStatus(t *testing.T) {
 	is := is.New(t)
 	k := koi.New()
