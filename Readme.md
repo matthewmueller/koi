@@ -77,13 +77,14 @@ route needs one, then add a view or redirect as needed.
 ```go
 	k.Wrap(createBoard).
 	Status(http.StatusCreated).
-	Redirect(func(board Board) string {
-		return "/boards/" + board.ID
-	})
+	Redirect("10")
 ```
 
-Successful HTML requests redirect with 303; JSON requests receive the response
-body. Use `koi.Empty` for handlers with no input or output data.
+Relative redirect targets append to the current path, so a request to
+`/boards` with `Redirect("10")` redirects HTML to `/boards/10`. A target
+beginning with `/` is used directly. Successful HTML requests redirect with
+303; JSON requests receive the response body when one is present. Use
+`koi.Empty` for handlers with no input or output data.
 
 ## Validation and errors
 
@@ -144,7 +145,7 @@ Missing `Accept` headers and equal preferences select JSON.
 | `View(name)` | Set the default HTML template filename. |
 | `ErrorView(name)` | Set the HTML error template; failed rendering uses the built-in page. |
 | `Status(code)` | Set the default success status. |
-| `Redirect(target)` | Redirect successful HTML responses; accepts a string or `func(Out) string`. |
+| `Redirect(target)` | Redirect successful HTML responses; relative targets append to the current path. |
 
 Route methods modify the route. Configure routes before serving requests.
 
@@ -156,7 +157,7 @@ Response methods return a copy; return or assign their result.
 | --- | --- |
 | `Body(value)` | Supply typed data for JSON encoding or HTML rendering. |
 | `Render(name, value)` | Supply data and override the HTML template. |
-| `Redirect(target)` | Redirect both formats without a body, or HTML only with a body. |
+| `Redirect(target)` | Redirect both formats without a body, or HTML only with a body; relative targets append to the current path. |
 | `Error(err)` | Set a failure, defaulting to 500; nil clears it. |
 | `Errorf(format, args...)` | Set a formatted error with `fmt.Errorf`, including `%w` wrapping. |
 | `Message(format, args...)` | Set safe public error text using `fmt.Sprintf`. |

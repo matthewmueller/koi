@@ -57,7 +57,7 @@ func TestWrapStatuses(t *testing.T) {
 func TestStatusOverrides(t *testing.T) {
 	is := is.New(t)
 	k := koi.New()
-	route := k.Wrap(boardHandler).Status(http.StatusAccepted).Redirect(func(b board) string { return "/boards/" + b.ID })
+	route := k.Wrap(boardHandler).Status(http.StatusAccepted).Redirect("42")
 	w := serve(t, route, "application/json")
 	is.Equal(w.Code, 202)
 	is.Equal(w.Body.String(), "{\"id\":\"42\"}\n")
@@ -96,6 +96,7 @@ func TestRepresentations(t *testing.T) {
 func TestRedirects(t *testing.T) {
 	is := is.New(t)
 	k := koi.New()
+	empty := func(req *koi.Request[koi.Empty]) (res koi.Response[koi.Empty]) { return res }
 	route := k.Wrap(func(req *koi.Request[koi.Empty]) (res koi.Response[board]) {
 		return res.Redirect("/login")
 	})
@@ -104,13 +105,25 @@ func TestRedirects(t *testing.T) {
 	w = serve(t, route, "text/html")
 	is.Equal(w.Header().Get("Location"), "/login")
 	route = k.Wrap(func(req *koi.Request[koi.Empty]) (res koi.Response[board]) {
-		return res.Redirect("/chosen").Body(board{ID: "42"})
-	}).Redirect("/default")
+		return res.Redirect("chosen").Body(board{ID: "42"})
+	}).Redirect("default")
 	w = serve(t, route, "text/html")
-	is.Equal(w.Header().Get("Location"), "/chosen")
+	is.Equal(w.Header().Get("Location"), "/boards/chosen")
 	w = serve(t, route, "application/json")
 	is.Equal(w.Code, 200)
-	empty := func(req *koi.Request[koi.Empty]) (res koi.Response[koi.Empty]) { return res }
+	emptyRoute := k.Wrap(empty).Redirect("10")
+	w = serve(t, emptyRoute, "text/html")
+	is.Equal(w.Header().Get("Location"), "/boards/10")
+	responseRoute := k.Wrap(func(req *koi.Request[koi.Empty]) (res koi.Response[koi.Empty]) {
+		return res.Redirect("10")
+	})
+	w = serve(t, responseRoute, "application/json")
+	is.Equal(w.Header().Get("Location"), "/boards/10")
+	req := httptest.NewRequest("GET", "/boards?page=2", nil)
+	req.Header.Set("Accept", "text/html")
+	w = httptest.NewRecorder()
+	responseRoute.ServeHTTP(w, req)
+	is.Equal(w.Header().Get("Location"), "/boards/10?page=2")
 	deletion := k.Wrap(empty).Status(http.StatusNoContent).Redirect("/boards")
 	w = serve(t, deletion, "text/html")
 	is.Equal(w.Code, 303)

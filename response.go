@@ -35,7 +35,9 @@ func (r Response[Out]) Render(name string, value Out) Response[Out] {
 
 // Redirect sets a 303 redirect, overriding the route’s redirect.
 // With a body, only HTML redirects; JSON receives the body.
-// Without a body, both representations redirect. An empty target clears the override.
+// Without a body, both representations redirect. Relative targets append to
+// the request path; leading-slash and absolute targets are used directly.
+// An empty target clears the override.
 func (r Response[Out]) Redirect(target string) Response[Out] {
 	r.redirect = target
 	return r

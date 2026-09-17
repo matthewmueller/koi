@@ -5,11 +5,13 @@ import (
 	_ "embed"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"html/template"
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
+	"path"
+	"strings"
 	"time"
 )
 
@@ -22,7 +24,7 @@ type Route[Out any] struct {
 	view      string
 	errorView string
 	status    int
-	redirect  func(Out) string
+	redirect  string
 }
 
 var _ http.Handler = (*Route[Empty])(nil)
@@ -49,16 +51,11 @@ func (r *Route[Out]) Status(code int) *Route[Out] {
 	return r
 }
 
-// Redirect configures a 303 redirect for successful HTML responses.
-// The target is a fixed string or a function of the response body. The function
-// receives Out’s zero value when no body is set. Response.Redirect overrides
-// this default; JSON outcomes are unaffected.
-func (r *Route[Out]) Redirect[Target ~string | func(Out) string](target Target) *Route[Out] {
-	if fn, ok := any(target).(func(Out) string); ok {
-		r.redirect = fn
-	} else {
-		r.redirect = func(Out) string { return fmt.Sprint(target) }
-	}
+// Redirect configures a 303 redirect for successful HTML responses. A relative
+// target is appended to the request path; leading-slash and absolute targets
+// are used directly. Response.Redirect overrides this default.
+func (r *Route[Out]) Redirect(target string) *Route[Out] {
+	r.redirect = target
 	return r
 }
 
@@ -145,10 +142,11 @@ func (r *Route[Out]) serve(w http.ResponseWriter, req *http.Request) (status int
 	// an explicit response redirect without a body also applies to JSON.
 	status = res.status
 	target := res.redirect
-	if target == "" && asHTML && r.redirect != nil {
-		target = r.redirect(res.body)
+	if target == "" && asHTML {
+		target = r.redirect
 	}
 	if target != "" && (asHTML || !res.hasBody) {
+		target = resolveRedirect(req, target)
 		status = http.StatusSeeOther
 		http.Redirect(w, req, target, status)
 		return status, nil
@@ -199,6 +197,28 @@ func (r *Route[Out]) serve(w http.ResponseWriter, req *http.Request) (status int
 		w.Header().Set("Content-Type", "application/json")
 	}
 	return status, writeBody(w, req, status, buf.Bytes())
+}
+
+func resolveRedirect(req *http.Request, target string) string {
+	if target == "" || strings.HasPrefix(target, "/") {
+		return target
+	}
+	parsed, err := url.Parse(target)
+	if err != nil || parsed.IsAbs() || parsed.Host != "" {
+		return target
+	}
+	u := *req.URL
+	u.Path = path.Join(strings.TrimRight(u.Path, "/"), strings.TrimLeft(parsed.Path, "/"))
+	if !strings.HasPrefix(u.Path, "/") {
+		u.Path = "/" + u.Path
+	}
+	if parsed.RawQuery != "" {
+		u.RawQuery = parsed.RawQuery
+	}
+	if parsed.Fragment != "" {
+		u.Fragment = parsed.Fragment
+	}
+	return u.String()
 }
 
 func negotiate(accept string) (bool, bool) {
