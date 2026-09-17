@@ -2,6 +2,7 @@ package koi
 
 import (
 	"encoding/json"
+	"net/http"
 	"sort"
 	"strings"
 	"unicode"
@@ -17,6 +18,13 @@ type ResponseError struct {
 	Status  int
 	Message string
 	Fields  Invalid
+}
+
+func (r *ResponseError) StatusText() string {
+	if r.Status == 0 {
+		return http.StatusText(http.StatusInternalServerError)
+	}
+	return http.StatusText(r.Status)
 }
 
 var _ error = (Invalid)(nil)

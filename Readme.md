@@ -28,7 +28,6 @@ go get github.com/matthewmueller/koi
 package main
 
 import (
-	"context"
 	"log"
 	"net/http"
 
@@ -43,7 +42,7 @@ type Greeting struct {
 	Message string `json:"message"`
 }
 
-func greet(ctx context.Context, req *koi.Request[GreetingInput]) (res koi.Response[Greeting]) {
+func greet(req *koi.Request[GreetingInput]) (res koi.Response[Greeting]) {
 	return res.Body(Greeting{Message: "Hello, " + req.Input.Name + "!"})
 }
 
@@ -128,7 +127,7 @@ Pull requests, bug reports, and feature requests are welcome!
 ### Handlers and requests
 
 ```go
-type Handler[In, Out any] func(context.Context, *Request[In]) Response[Out]
+type Handler[In, Out any] func(*Request[In]) Response[Out]
 ```
 
 `Request[In]` embeds `*http.Request` and provides decoded input through `Input`.

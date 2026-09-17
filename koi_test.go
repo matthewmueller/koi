@@ -2,7 +2,6 @@ package koi_test
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -21,7 +20,7 @@ type board struct {
 	ID string `json:"id"`
 }
 
-func boardHandler(ctx context.Context, req *koi.Request[koi.Empty]) (res koi.Response[board]) {
+func boardHandler(req *koi.Request[koi.Empty]) (res koi.Response[board]) {
 	return res.Body(board{ID: "42"})
 }
 
@@ -65,7 +64,7 @@ func TestStatusOverrides(t *testing.T) {
 	w = serve(t, route, "text/html")
 	is.Equal(w.Code, 303)
 	is.Equal(w.Header().Get("Location"), "/boards/42")
-	route = k.Create(func(ctx context.Context, req *koi.Request[koi.Empty]) (res koi.Response[board]) {
+	route = k.Create(func(req *koi.Request[koi.Empty]) (res koi.Response[board]) {
 		return res.Status(203).Header("X-Board", "42").Body(board{ID: "42"})
 	}).Status(202)
 	w = serve(t, route, "application/json")
@@ -85,7 +84,7 @@ func TestRepresentations(t *testing.T) {
 	w = serve(t, route, "application/json")
 	is.Equal(w.Body.String(), "{\"id\":\"42\"}\n")
 	is.Equal(w.Header().Get("Vary"), "Accept")
-	route = k.Show(func(ctx context.Context, req *koi.Request[koi.Empty]) (res koi.Response[board]) {
+	route = k.Show(func(req *koi.Request[koi.Empty]) (res koi.Response[board]) {
 		return res.Render(custom, board{ID: "42"})
 	}).View(view)
 	w = serve(t, route, "text/html")
@@ -97,21 +96,21 @@ func TestRepresentations(t *testing.T) {
 func TestRedirects(t *testing.T) {
 	is := is.New(t)
 	k := koi.New()
-	route := k.Wrap(func(ctx context.Context, req *koi.Request[koi.Empty]) (res koi.Response[board]) {
+	route := k.Wrap(func(req *koi.Request[koi.Empty]) (res koi.Response[board]) {
 		return res.Redirect("/login")
 	})
 	w := serve(t, route, "application/json")
 	is.Equal(w.Code, 303)
 	w = serve(t, route, "text/html")
 	is.Equal(w.Header().Get("Location"), "/login")
-	route = k.Wrap(func(ctx context.Context, req *koi.Request[koi.Empty]) (res koi.Response[board]) {
+	route = k.Wrap(func(req *koi.Request[koi.Empty]) (res koi.Response[board]) {
 		return res.Redirect("/chosen").Body(board{ID: "42"})
 	}).Redirect("/default")
 	w = serve(t, route, "text/html")
 	is.Equal(w.Header().Get("Location"), "/chosen")
 	w = serve(t, route, "application/json")
 	is.Equal(w.Code, 200)
-	empty := func(ctx context.Context, req *koi.Request[koi.Empty]) (res koi.Response[koi.Empty]) { return res }
+	empty := func(req *koi.Request[koi.Empty]) (res koi.Response[koi.Empty]) { return res }
 	deletion := k.Delete(empty).Redirect("/boards")
 	w = serve(t, deletion, "text/html")
 	is.Equal(w.Code, 303)
@@ -127,7 +126,7 @@ func TestErrorPrivacyAndLogging(t *testing.T) {
 	k := koi.New()
 	var logs bytes.Buffer
 	k.Log = slog.New(slog.NewJSONHandler(&logs, nil))
-	route := k.Create(func(ctx context.Context, req *koi.Request[koi.Empty]) (res koi.Response[board]) {
+	route := k.Create(func(req *koi.Request[koi.Empty]) (res koi.Response[board]) {
 		return res.Error(errors.New("postgres: secret password"))
 	})
 	w := serve(t, route, "application/json")
@@ -143,7 +142,7 @@ func TestErrorPrivacyAndLogging(t *testing.T) {
 	is.Equal(record["path"], "/boards")
 	k.Debug = true
 	is.True(strings.Contains(serve(t, route, "application/json").Body.String(), "postgres: secret password"))
-	route = k.Wrap(func(ctx context.Context, req *koi.Request[koi.Empty]) (res koi.Response[board]) {
+	route = k.Wrap(func(req *koi.Request[koi.Empty]) (res koi.Response[board]) {
 		return res.Status(404).Error(errors.New("missing board"))
 	})
 	w = serve(t, route, "application/json")
@@ -155,7 +154,7 @@ func TestErrorf(t *testing.T) {
 	k := koi.New()
 	var logs bytes.Buffer
 	k.Log = slog.New(slog.NewJSONHandler(&logs, nil))
-	route := k.Wrap(func(ctx context.Context, req *koi.Request[koi.Empty]) (res koi.Response[board]) {
+	route := k.Wrap(func(req *koi.Request[koi.Empty]) (res koi.Response[board]) {
 		return res.Status(503).Errorf("load board %d: %w", 42, errors.New("database unavailable"))
 	})
 	w := serve(t, route, "application/json")
@@ -174,7 +173,7 @@ func TestMessageFormattingAndStatus(t *testing.T) {
 	is := is.New(t)
 	k := koi.New()
 	underlying := errors.New("database: secret")
-	route := k.Wrap(func(ctx context.Context, req *koi.Request[koi.Empty]) (res koi.Response[board]) {
+	route := k.Wrap(func(req *koi.Request[koi.Empty]) (res koi.Response[board]) {
 		return res.Status(http.StatusConflict).Error(underlying).Message("board %d already exists", 42)
 	})
 	w := serve(t, route, "application/json")
@@ -192,7 +191,7 @@ func TestErrorView(t *testing.T) {
 	is := is.New(t)
 	k := koi.New()
 	view := writeView(t, `<h1>{{.Status}} {{.Message}}</h1><p>{{index .Fields "name"}}</p>`)
-	route := k.Show(func(ctx context.Context, req *koi.Request[koi.Empty]) (res koi.Response[board]) {
+	route := k.Show(func(req *koi.Request[koi.Empty]) (res koi.Response[board]) {
 		return res.Status(http.StatusNotFound).Error(errors.New("missing board")).Message("Board not found")
 	}).ErrorView(view)
 	w := serve(t, route, "text/html")
@@ -203,7 +202,7 @@ func TestErrorView(t *testing.T) {
 	type input struct {
 		Name string `json:"name" validate:"required"`
 	}
-	validationRoute := k.New(func(ctx context.Context, req *koi.Request[input]) (res koi.Response[board]) {
+	validationRoute := k.New(func(req *koi.Request[input]) (res koi.Response[board]) {
 		return res.Body(board{ID: "42"})
 	}).ErrorView(validationView)
 	req := httptest.NewRequest(http.MethodPost, "/boards", strings.NewReader(`{}`))
@@ -218,18 +217,20 @@ func TestErrorView(t *testing.T) {
 func TestErrorViewFallback(t *testing.T) {
 	is := is.New(t)
 	k := koi.New()
-	route := k.Show(func(ctx context.Context, req *koi.Request[koi.Empty]) (res koi.Response[board]) {
+	route := k.Show(func(req *koi.Request[koi.Empty]) (res koi.Response[board]) {
 		return res.Status(http.StatusNotFound).Error(errors.New("missing board"))
 	}).ErrorView(filepath.Join(t.TempDir(), "missing.html"))
 	w := serve(t, route, "text/html")
 	is.Equal(w.Code, http.StatusNotFound)
+	is.True(strings.Contains(w.Body.String(), "Koi"))
 	is.True(strings.Contains(w.Body.String(), "Not Found"))
+	is.True(strings.Contains(w.Body.String(), "<pre>"))
 }
 
 func TestErrorViewPartialFallback(t *testing.T) {
 	is := is.New(t)
 	k := koi.New()
-	route := k.Show(func(ctx context.Context, req *koi.Request[koi.Empty]) (res koi.Response[board]) {
+	route := k.Show(func(req *koi.Request[koi.Empty]) (res koi.Response[board]) {
 		return res.Status(404).Header("Content-Length", "999").Error(errors.New("private"))
 	}).ErrorView(writeView(t, `partial secret {{.Missing}}`))
 	w := serve(t, route, "text/html")
@@ -241,7 +242,7 @@ func TestErrorViewPartialFallback(t *testing.T) {
 
 func TestErrorViewEmpty(t *testing.T) {
 	is := is.New(t)
-	route := koi.New().Show(func(ctx context.Context, req *koi.Request[koi.Empty]) (res koi.Response[board]) {
+	route := koi.New().Show(func(req *koi.Request[koi.Empty]) (res koi.Response[board]) {
 		return res.Status(404).Error(errors.New("private"))
 	}).ErrorView(writeView(t, ""))
 	w := serve(t, route, "text/html")
@@ -257,12 +258,22 @@ func TestRenderFailureBuffered(t *testing.T) {
 	is.Equal(w.Code, 500)
 	is.True(!strings.Contains(w.Body.String(), "partial secret"))
 	is.True(strings.Contains(w.Body.String(), "Internal Server Error"))
-	route := k.Wrap(func(ctx context.Context, req *koi.Request[koi.Empty]) (res koi.Response[any]) {
+	route := k.Wrap(func(req *koi.Request[koi.Empty]) (res koi.Response[any]) {
 		return res.Body(make(chan int))
 	})
 	w = serve(t, route, "application/json")
 	is.Equal(w.Code, 500)
 	is.Equal(w.Body.String(), "{\"error\":\"Internal Server Error\"}\n")
+}
+
+func TestMissingHTMLView(t *testing.T) {
+	is := is.New(t)
+	k := koi.New()
+	k.Debug = true
+	route := k.Create(boardHandler)
+	w := serve(t, route, "text/html")
+	is.Equal(w.Code, http.StatusInternalServerError)
+	is.True(strings.Contains(w.Body.String(), "HTML response has no view"))
 }
 
 func TestNegotiation(t *testing.T) {
@@ -293,7 +304,7 @@ func TestValidationJSON(t *testing.T) {
 		Name string `json:"name" validate:"required"`
 	}
 	called := false
-	route := k.Create(func(ctx context.Context, req *koi.Request[input]) (res koi.Response[board]) {
+	route := k.Create(func(req *koi.Request[input]) (res koi.Response[board]) {
 		called = true
 		return res.Body(board{ID: "42"})
 	})
@@ -323,7 +334,7 @@ func TestAcceptsMediaTypes(t *testing.T) {
 
 func TestVaryPreserved(t *testing.T) {
 	is := is.New(t)
-	route := koi.New().Wrap(func(ctx context.Context, req *koi.Request[koi.Empty]) (res koi.Response[board]) {
+	route := koi.New().Wrap(func(req *koi.Request[koi.Empty]) (res koi.Response[board]) {
 		return res.Header("Vary", "Origin").Body(board{ID: "42"})
 	})
 	w := serve(t, route, "application/json")
@@ -342,7 +353,7 @@ func TestPointerInputValidation(t *testing.T) {
 	is := is.New(t)
 	called := false
 	k := koi.New()
-	route := k.Wrap(func(ctx context.Context, req *koi.Request[*pointerInput]) (res koi.Response[board]) {
+	route := k.Wrap(func(req *koi.Request[*pointerInput]) (res koi.Response[board]) {
 		called = true
 		return res.Body(board{ID: "42"})
 	})
@@ -372,7 +383,7 @@ func TestHead(t *testing.T) {
 	is.Equal(w.Body.Len(), 0)
 	is.Equal(w.Header().Get("Content-Type"), "application/json")
 	w = httptest.NewRecorder()
-	k.Wrap(func(ctx context.Context, req *koi.Request[koi.Empty]) (res koi.Response[board]) {
+	k.Wrap(func(req *koi.Request[koi.Empty]) (res koi.Response[board]) {
 		return res.Error(errors.New("private"))
 	}).ServeHTTP(w, req)
 	is.Equal(w.Code, 500)
@@ -384,12 +395,12 @@ func TestResponseCopies(t *testing.T) {
 	k := koi.New()
 	base := koi.Response[board]{}.Header("X-Value", "base")
 	changed := base.Header("X-Value", "changed")
-	route := k.Wrap(func(ctx context.Context, req *koi.Request[koi.Empty]) koi.Response[board] {
+	route := k.Wrap(func(req *koi.Request[koi.Empty]) koi.Response[board] {
 		return base.Body(board{ID: "42"})
 	})
 	w := serve(t, route, "")
 	is.Equal(w.Header().Get("X-Value"), "base")
-	route = k.Wrap(func(ctx context.Context, req *koi.Request[koi.Empty]) koi.Response[board] { return changed })
+	route = k.Wrap(func(req *koi.Request[koi.Empty]) koi.Response[board] { return changed })
 	w = serve(t, route, "")
 	is.Equal(w.Header().Get("X-Value"), "changed")
 }

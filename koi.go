@@ -2,7 +2,6 @@
 package koi
 
 import (
-	"context"
 	"log/slog"
 	"net/http"
 
@@ -13,7 +12,7 @@ import (
 type Empty struct{}
 
 // Handler chooses an outcome; Koi handles its HTTP representation.
-type Handler[In, Out any] func(context.Context, *Request[In]) Response[Out]
+type Handler[In, Out any] func(*Request[In]) Response[Out]
 
 // Koi configures routes. Configure its fields before serving requests.
 type Koi struct {
@@ -54,7 +53,7 @@ func (k *Koi) Wrap[In, Out any](handler Handler[In, Out]) *Route[Out] {
 		if invalid := k.Validator.Validate(&req.Input); invalid != nil {
 			return Response[Out]{}, invalid
 		}
-		return handler(r.Context(), req), nil
+		return handler(req), nil
 	}}
 }
 

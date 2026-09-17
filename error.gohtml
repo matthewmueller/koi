@@ -1,0 +1,61 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{{ .StatusText }} · Koi</title>
+    <style>
+      body {
+        margin: 0;
+        background: #fff;
+        color: #212529;
+        font: 16px/1.5 system-ui, sans-serif;
+      }
+
+      main {
+        max-width: 720px;
+        margin: 0 auto;
+        padding: 12vh 24px;
+      }
+
+      .brand {
+        color: #228be6;
+        font-weight: 700;
+      }
+
+      h1 {
+        margin: 12px 0 0;
+        font-size: 48px;
+        line-height: 1;
+      }
+
+      .status {
+        color: #868e96;
+        margin-top: 8px;
+      }
+
+      pre {
+        margin-top: 32px;
+        padding: 16px;
+        overflow: auto;
+        border: 0;
+        border-radius: 4px;
+        background: #f8f9fa;
+        color: #212529;
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <div class="brand">Koi</div>
+      <h1>{{ .StatusText }}</h1>
+      <div class="status">HTTP {{ .Status }}</div>
+      <pre>{{ .Message }}{{- if .Fields }}{{ "\n\n" }}
+      {{ range $field, $messages := .Fields }}{{ $field }}: {{ range $index, $message := $messages }}{{ if $index }},
+      {{ end }}{{ $message }}{{ end }}
+      {{ end }}{{- end -}}</pre>
+    </main>
+  </body>
+</html>

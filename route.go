@@ -2,10 +2,11 @@ package koi
 
 import (
 	"bytes"
+	_ "embed"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"html"
+	"html/template"
 	"io"
 	"log/slog"
 	"net/http"
@@ -178,7 +179,11 @@ func (r *Route[Out]) serve(w http.ResponseWriter, req *http.Request) (status int
 		if view == "" {
 			view = r.view
 		}
-		err = r.k.Renderer.Render(req.Context(), &buf, view, res.body)
+		if view == "" {
+			err = errors.New("HTML response has no view; configure Route.View, Response.Render, or Route.Redirect")
+		} else {
+			err = r.k.Renderer.Render(req.Context(), &buf, view, res.body)
+		}
 	} else {
 		err = r.encodeJson(&buf, res.body)
 	}
@@ -239,6 +244,11 @@ func (k *Koi) errorResponse(status int, err error, message string) *ResponseErro
 	}
 }
 
+//go:embed error.gohtml
+var errorPage string
+
+var errorTemplate = template.Must(template.New("error.gohtml").Parse(errorPage))
+
 func (r *Route[Out]) writeError(w http.ResponseWriter, req *http.Request, asHTML bool, resErr *ResponseError) {
 	// An error replaces any previously planned body, so its length no longer applies.
 	w.Header().Del("Content-Length")
@@ -254,20 +264,10 @@ func (r *Route[Out]) writeError(w http.ResponseWriter, req *http.Request, asHTML
 			// Discard partial output before writing the built-in error page.
 			body.Reset()
 		}
-		message := html.EscapeString(resErr.Message)
-		body.WriteString("<!doctype html><html><head><title>")
-		body.WriteString(message)
-		body.WriteString("</title></head><body><h1>")
-		body.WriteString(message)
-		body.WriteString("</h1>")
-		if resErr.Fields != nil {
-			// Invalid contains only strings and string slices, so marshaling cannot fail.
-			data, _ := json.Marshal(resErr.Fields)
-			body.WriteString("<pre>")
-			body.WriteString(html.EscapeString(string(data)))
-			body.WriteString("</pre>")
+		if err := errorTemplate.Execute(&body, resErr); err != nil {
+			body.Reset()
+			body.WriteString("Koi error page failed to render")
 		}
-		body.WriteString("</body></html>\n")
 	} else {
 		w.Header().Set("Content-Type", "application/json")
 		// This fixed string/map payload and bytes.Buffer cannot cause encoding errors.
