@@ -1,11 +1,42 @@
 package koi_test
 
 import (
+	"context"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/matryer/is"
 	"github.com/matthewmueller/koi"
 )
+
+func TestValidationPointerInput(t *testing.T) {
+	is := is.New(t)
+	type input struct {
+		Email string `json:"email" validate:"required,email"`
+	}
+	called := false
+	route := koi.New().Create(func(ctx context.Context, req *koi.Request[*input]) (res koi.Response[koi.Empty]) {
+		called = true
+		is.Equal(req.Input.Email, "matt@example.com")
+		return res
+	})
+	req := httptest.NewRequest("POST", "/users", strings.NewReader(`{"email":"matt@example.com"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	route.ServeHTTP(w, req)
+	is.Equal(w.Code, 201)
+	is.True(called)
+
+	called = false
+	req = httptest.NewRequest("POST", "/users", strings.NewReader(`{}`))
+	req.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+	route.ServeHTTP(w, req)
+	is.Equal(w.Code, 422)
+	is.True(!called)
+	is.Equal(w.Body.String(), "{\"error\":\"Email is required\",\"fields\":{\"email\":[\"is required\"]}}\n")
+}
 
 func TestValidationFields(t *testing.T) {
 	is := is.New(t)

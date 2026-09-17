@@ -54,7 +54,8 @@ func (v *inputValidator) Validate(input any) Invalid {
 	}
 
 	if value.Kind() == reflect.Struct {
-		if err := v.validator.Struct(input); err != nil {
+		// Struct unwraps only one pointer; use the struct resolved above for nested pointer inputs.
+		if err := v.validator.Struct(value.Interface()); err != nil {
 			fields := err.(validator.ValidationErrors)
 			var result Invalid
 			for _, field := range fields {
