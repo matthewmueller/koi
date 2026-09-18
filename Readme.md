@@ -82,9 +82,12 @@ route needs one, then add a view or redirect as needed.
 
 Relative redirect targets append to the current path, so a request to
 `/boards` with `Redirect("10")` redirects HTML to `/boards/10`. A target
-beginning with `/` is used directly. Successful HTML requests redirect with
-303; JSON requests receive the response body when one is present. Use
-`koi.Empty` for handlers with no input or output data.
+of `"."` redirects to the current URL, and `".."` redirects to its parent
+path. Other relative paths such as `"../some/path"` are cleaned and appended
+to the current path. A target beginning with `/` or an absolute `http://` or
+`https://` URL is used directly. Successful HTML requests redirect with 303;
+JSON requests receive the response body when one is present. Use `koi.Empty`
+for handlers with no input or output data.
 
 ## Validation and errors
 
@@ -157,7 +160,7 @@ Response methods return a copy; return or assign their result.
 | --- | --- |
 | `Body(value)` | Supply typed data for JSON encoding or HTML rendering. |
 | `Render(name, value)` | Supply data and override the HTML template. |
-| `Redirect(target)` | Redirect both formats without a body, or HTML only with a body; relative targets append to the current path. |
+| `Redirect(target)` | Redirect both formats without a body, or HTML only with a body; relative targets append to the current path, support `.`/`..` segments, and absolute URLs pass through unchanged. |
 | `Error(err)` | Set a failure, defaulting to 500; nil clears it. |
 | `Errorf(format, args...)` | Set a formatted error with `fmt.Errorf`, including `%w` wrapping. |
 | `Message(format, args...)` | Set safe public error text using `fmt.Sprintf`. |

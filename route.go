@@ -52,8 +52,9 @@ func (r *Route[Out]) Status(code int) *Route[Out] {
 }
 
 // Redirect configures a 303 redirect for successful HTML responses. A relative
-// target is appended to the request path; leading-slash and absolute targets
-// are used directly. Response.Redirect overrides this default.
+// target is appended to the request path; "." redirects to the current URL;
+// leading-slash and absolute targets are used directly. Response.Redirect
+// overrides this default.
 func (r *Route[Out]) Redirect(target string) *Route[Out] {
 	r.redirect = target
 	return r
@@ -200,6 +201,9 @@ func (r *Route[Out]) serve(w http.ResponseWriter, req *http.Request) (status int
 }
 
 func resolveRedirect(req *http.Request, target string) string {
+	if target == "." {
+		return req.URL.RequestURI()
+	}
 	if target == "" || strings.HasPrefix(target, "/") {
 		return target
 	}
