@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -20,8 +21,31 @@ type board struct {
 	ID string `json:"id"`
 }
 
+type readTracker struct {
+	read bool
+}
+
+func (r *readTracker) Read([]byte) (int, error) {
+	r.read = true
+	return 0, io.EOF
+}
+
 func boardHandler(req *koi.Request[koi.Empty]) (res koi.Response[board]) {
 	return res.Body(board{ID: "42"})
+}
+
+func TestEmptyDoesNotReadBody(t *testing.T) {
+	is := is.New(t)
+	body := &readTracker{}
+	req := httptest.NewRequest(http.MethodPost, "/boards", body)
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	koi.New().Wrap(boardHandler).ServeHTTP(w, req)
+
+	is.Equal(w.Code, http.StatusOK)
+	is.True(!body.read)
 }
 
 func serve(t testing.TB, h http.Handler, accept string) *httptest.ResponseRecorder {

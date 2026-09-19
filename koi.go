@@ -45,12 +45,20 @@ func New() *Koi {
 func (k *Koi) Wrap[In, Out any](handler Handler[In, Out]) *Route[Out] {
 	return &Route[Out]{k: k, handle: func(r *http.Request) (Response[Out], error) {
 		req := &Request[In]{Request: r}
+
+		// Skip reading and validating if the input is empty
+		if _, ok := any(req.Input).(Empty); ok {
+			return handler(req), nil
+		}
+
+		// Read and validate the input
 		if err := request.Unmarshal(r, &req.Input); err != nil {
 			return Response[Out]{}, err
 		}
 		if invalid := k.Validator.Validate(&req.Input); invalid != nil {
 			return Response[Out]{}, invalid
 		}
+
 		return handler(req), nil
 	}}
 }

@@ -109,26 +109,46 @@ func TestValidationCustom(t *testing.T) {
 	is.True(err == nil)
 }
 
-type customValidator struct {
-	failure koi.Invalid
-}
+type customValidator struct{}
 
 var _ koi.Validator = (*customValidator)(nil)
 
-func (v *customValidator) Validate(any) koi.Invalid { return v.failure }
+func (v *customValidator) Validate(value any) koi.Invalid {
+	input, ok := value.(*customValidatorInput)
+	if !ok || input.Name != "matt" {
+		return nil
+	}
+	var invalid koi.Invalid
+	invalid.Add("name", "is already taken")
+	return invalid
+}
+
+type customValidatorInput struct {
+	Name string `json:"name"`
+}
 
 func TestValidatorOverride(t *testing.T) {
 	is := is.New(t)
 	k := koi.New()
-	validator := &customValidator{}
-	k.Validator = validator
-	route := k.Wrap(boardHandler)
-	w := serve(t, route, "application/json")
-	is.Equal(w.Code, 200)
-	var invalid koi.Invalid
-	invalid.Add("name", "is already taken")
-	validator.failure = invalid
-	w = serve(t, route, "application/json")
+	k.Validator = &customValidator{}
+	called := 0
+	route := k.Wrap(func(req *koi.Request[customValidatorInput]) (res koi.Response[koi.Empty]) {
+		called++
+		is.Equal(req.Input.Name, "jane")
+		return res
+	})
+	req := httptest.NewRequest("POST", "/users", strings.NewReader(`{"name":"jane"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	route.ServeHTTP(w, req)
+	is.Equal(w.Code, 204)
+	is.Equal(called, 1)
+
+	req = httptest.NewRequest("POST", "/users", strings.NewReader(`{"name":"matt"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+	route.ServeHTTP(w, req)
 	is.Equal(w.Code, 422)
+	is.Equal(called, 1)
 	is.Equal(w.Body.String(), "{\"error\":\"Name is already taken\",\"fields\":{\"name\":[\"is already taken\"]}}\n")
 }
