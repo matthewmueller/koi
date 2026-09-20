@@ -552,6 +552,36 @@ func TestFormMapBody(t *testing.T) {
 	is.Equal(input.Categories, map[string]int{"a": 1, "b": 2, "c.d": 3})
 }
 
+func TestFormArrayBody(t *testing.T) {
+	is := is.New(t)
+	type Input struct {
+		Categories []string `form:"categories"`
+	}
+	input := Input{}
+	r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("categories.0=a&categories.1=b&categories.2=c"))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	err := request.Unmarshal(r, &input)
+
+	is.NoErr(err)
+	is.Equal(input.Categories, []string{"a", "b", "c"})
+}
+
+func TestFormImplicitArrayBody(t *testing.T) {
+	is := is.New(t)
+	type Input struct {
+		Categories []string `form:"categories"`
+	}
+	input := Input{}
+	r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("categories._=a&categories._=b&categories._=c"))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	err := request.Unmarshal(r, &input)
+
+	is.NoErr(err)
+	is.Equal(input.Categories, []string{"a", "b", "c"})
+}
+
 func TestPointer(t *testing.T) {
 	is := is.New(t)
 	type Input struct {
