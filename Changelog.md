@@ -1,3 +1,10 @@
+# 0.1.1 / 2026-09-29
+
+- add support for multipart uploads
+- add a few tests
+- skip reading and validating if the input is empty
+- test that we support form maps
+
 # 0.1.0 / 2026-09-18
 
 - Large refactor of koi implementation
