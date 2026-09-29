@@ -6,9 +6,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"mime"
+	"mime/multipart"
 	"net/http"
 	"net/url"
+	"reflect"
+	"slices"
 	"strings"
 
 	"github.com/ajg/form"
@@ -60,6 +64,8 @@ func unmarshalBody(r *http.Request, v any) (url.Values, error) {
 		return unmarshalJSON(r.Body, v)
 	case "application/x-www-form-urlencoded":
 		return unmarshalForm(r, v)
+	case "multipart/form-data":
+		return unmarshalMultipart(r, v)
 	}
 	if strings.HasSuffix(mediaType, "+json") {
 		return unmarshalJSON(r.Body, v)
@@ -84,6 +90,108 @@ func unmarshalForm(r *http.Request, v any) (url.Values, error) {
 		return nil, err
 	}
 	return r.PostForm, nil
+}
+
+// maxMemory is the number of bytes of a multipart body held in memory. The
+// remainder spills to temporary files.
+const maxMemory = 32 << 20
+
+// unmarshalMultipart decodes multipart values like form values and assigns
+// uploaded files to top-level *multipart.FileHeader and []*multipart.FileHeader
+// fields
+func unmarshalMultipart(r *http.Request, v any) (url.Values, error) {
+	if r.MultipartForm == nil {
+		if err := r.ParseMultipartForm(maxMemory); err != nil {
+			return nil, err
+		}
+	}
+	values := url.Values(r.MultipartForm.Value)
+	if err := unmarshalValues(v, values); err != nil {
+		return nil, err
+	}
+	fields := make(url.Values, len(values)+len(r.MultipartForm.File))
+	maps.Copy(fields, values)
+	for key := range r.MultipartForm.File {
+		fields[key] = nil
+	}
+	if err := unmarshalFiles(v, r.MultipartForm.File); err != nil {
+		return nil, err
+	}
+	return fields, nil
+}
+
+var (
+	fileHeaderType  = reflect.TypeFor[*multipart.FileHeader]()
+	fileHeadersType = reflect.TypeFor[[]*multipart.FileHeader]()
+)
+
+func unmarshalFiles(v any, files map[string][]*multipart.FileHeader) error {
+	if len(files) == 0 {
+		return nil
+	}
+	rv := reflect.ValueOf(v)
+	for rv.Kind() == reflect.Pointer {
+		if rv.IsNil() {
+			return nil
+		}
+		rv = rv.Elem()
+	}
+	if rv.Kind() != reflect.Struct {
+		return nil
+	}
+	for field := range rv.Type().Fields() {
+		if !field.IsExported() || (field.Type != fileHeaderType && field.Type != fileHeadersType) {
+			continue
+		}
+		name := fieldName(field)
+		if name == "" {
+			continue
+		}
+		headers := lookupFiles(files, name)
+		if len(headers) == 0 {
+			continue
+		}
+		if field.Type == fileHeaderType {
+			rv.FieldByIndex(field.Index).Set(reflect.ValueOf(headers[0]))
+		} else {
+			rv.FieldByIndex(field.Index).Set(reflect.ValueOf(headers))
+		}
+	}
+	return nil
+}
+
+// lookupFiles prefers an exact key match, then falls back to the first
+// case-insensitive match in sorted key order so the result is deterministic
+func lookupFiles(files map[string][]*multipart.FileHeader, name string) []*multipart.FileHeader {
+	if headers, ok := files[name]; ok {
+		return headers
+	}
+	for _, key := range slices.Sorted(maps.Keys(files)) {
+		if strings.EqualFold(key, name) {
+			return files[key]
+		}
+	}
+	return nil
+}
+
+// fieldName resolves a field's name the same way as ajg/form: the form tag,
+// then the json tag, then the field name. Returns an empty string for ignored
+// fields.
+func fieldName(field reflect.StructField) string {
+	for _, key := range []string{"form", "json"} {
+		tag, ok := field.Tag.Lookup(key)
+		if !ok {
+			continue
+		}
+		name, _, _ := strings.Cut(tag, ",")
+		if name == "-" {
+			return ""
+		}
+		if name != "" {
+			return name
+		}
+	}
+	return field.Name
 }
 
 func unmarshalJSON(body io.Reader, v any) (url.Values, error) {

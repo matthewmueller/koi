@@ -3,6 +3,8 @@ package request_test
 import (
 	"bytes"
 	"errors"
+	"io"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -740,4 +742,199 @@ func TestUnmarshalQueryPointer(t *testing.T) {
 	is.NoErr(err)
 	is.True(input.ID != nil)
 	is.Equal(*input.ID, 42)
+}
+
+func multipartRequest(values map[string][]string, files map[string][]string) (*http.Request, error) {
+	body := new(bytes.Buffer)
+	w := multipart.NewWriter(body)
+	for key, vs := range values {
+		for _, v := range vs {
+			if err := w.WriteField(key, v); err != nil {
+				return nil, err
+			}
+		}
+	}
+	for key, names := range files {
+		for _, name := range names {
+			part, err := w.CreateFormFile(key, name)
+			if err != nil {
+				return nil, err
+			}
+			if _, err := part.Write([]byte("contents of " + name)); err != nil {
+				return nil, err
+			}
+		}
+	}
+	if err := w.Close(); err != nil {
+		return nil, err
+	}
+	r := httptest.NewRequest(http.MethodPost, "/", body)
+	r.Header.Set("Content-Type", w.FormDataContentType())
+	return r, nil
+}
+
+func readFile(header *multipart.FileHeader) (string, error) {
+	file, err := header.Open()
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+	data, err := io.ReadAll(file)
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
+}
+
+func TestMultipartValues(t *testing.T) {
+	is := is.New(t)
+	var input struct {
+		Title  string   `json:"title"`
+		Remove []int    `json:"remove"`
+		Tags   []string `form:"tags"`
+	}
+	r, err := multipartRequest(map[string][]string{
+		"title":    {"hello"},
+		"remove._": {"1", "2"},
+		"tags._":   {"a"},
+	}, nil)
+	is.NoErr(err)
+
+	err = request.Unmarshal(r, &input)
+
+	is.NoErr(err)
+	is.Equal(input.Title, "hello")
+	is.Equal(input.Remove, []int{1, 2})
+	is.Equal(input.Tags, []string{"a"})
+}
+
+func TestMultipartFile(t *testing.T) {
+	is := is.New(t)
+	var input struct {
+		Title  string                `json:"title"`
+		Avatar *multipart.FileHeader `json:"avatar"`
+	}
+	r, err := multipartRequest(map[string][]string{"title": {"hello"}}, map[string][]string{"avatar": {"me.png"}})
+	is.NoErr(err)
+
+	err = request.Unmarshal(r, &input)
+
+	is.NoErr(err)
+	is.Equal(input.Title, "hello")
+	is.True(input.Avatar != nil)
+	is.Equal(input.Avatar.Filename, "me.png")
+	data, err := readFile(input.Avatar)
+	is.NoErr(err)
+	is.Equal(data, "contents of me.png")
+}
+
+func TestMultipartFiles(t *testing.T) {
+	is := is.New(t)
+	var input struct {
+		Attachments []*multipart.FileHeader `json:"attachments"`
+	}
+	r, err := multipartRequest(nil, map[string][]string{"attachments": {"a.txt", "b.txt"}})
+	is.NoErr(err)
+
+	err = request.Unmarshal(r, &input)
+
+	is.NoErr(err)
+	is.Equal(len(input.Attachments), 2)
+	is.Equal(input.Attachments[0].Filename, "a.txt")
+	data, err := readFile(input.Attachments[1])
+	is.NoErr(err)
+	is.Equal(data, "contents of b.txt")
+}
+
+func TestMultipartMissingFile(t *testing.T) {
+	is := is.New(t)
+	var input struct {
+		Title       string                  `json:"title"`
+		Avatar      *multipart.FileHeader   `json:"avatar"`
+		Attachments []*multipart.FileHeader `json:"attachments"`
+	}
+	r, err := multipartRequest(map[string][]string{"title": {"hello"}}, nil)
+	is.NoErr(err)
+
+	err = request.Unmarshal(r, &input)
+
+	is.NoErr(err)
+	is.Equal(input.Title, "hello")
+	is.Equal(input.Avatar, nil)
+	is.Equal(input.Attachments, nil)
+}
+
+func TestMultipartIgnoredFile(t *testing.T) {
+	is := is.New(t)
+	var input struct {
+		Secret *multipart.FileHeader `json:"-"`
+	}
+	r, err := multipartRequest(nil, map[string][]string{"Secret": {"a.txt"}})
+	is.NoErr(err)
+
+	err = request.Unmarshal(r, &input)
+
+	is.NoErr(err)
+	is.Equal(input.Secret, nil)
+}
+
+func TestMultipartFileInQuery(t *testing.T) {
+	is := is.New(t)
+	var input struct {
+		Avatar *multipart.FileHeader `json:"avatar"`
+	}
+	r, err := multipartRequest(nil, map[string][]string{"avatar": {"a.png"}})
+	is.NoErr(err)
+	r.URL.RawQuery = "avatar=b"
+
+	err = request.Unmarshal(r, &input)
+
+	is.True(err != nil)
+}
+
+func TestMultipartDuplicateQueryField(t *testing.T) {
+	is := is.New(t)
+	var input struct {
+		Title string `json:"title"`
+	}
+	r, err := multipartRequest(map[string][]string{"title": {"a"}}, nil)
+	is.NoErr(err)
+	r.URL.RawQuery = "title=b"
+
+	err = request.Unmarshal(r, &input)
+
+	is.True(errors.Is(err, request.ErrDuplicateField))
+}
+
+func TestMultipartFileCaseCollision(t *testing.T) {
+	is := is.New(t)
+	for range 20 {
+		var input struct {
+			Avatar *multipart.FileHeader `json:"avatar"`
+		}
+		r, err := multipartRequest(nil, map[string][]string{
+			"Avatar": {"upper.png"},
+			"avatar": {"lower.png"},
+		})
+		is.NoErr(err)
+
+		err = request.Unmarshal(r, &input)
+
+		is.NoErr(err)
+		is.Equal(input.Avatar.Filename, "lower.png")
+	}
+}
+
+func TestMultipartFileCaseInsensitive(t *testing.T) {
+	is := is.New(t)
+	var input struct {
+		Avatar *multipart.FileHeader `json:"avatar"`
+	}
+	r, err := multipartRequest(nil, map[string][]string{"AVATAR": {"a.png"}})
+	is.NoErr(err)
+
+	err = request.Unmarshal(r, &input)
+
+	is.NoErr(err)
+	is.Equal(input.Avatar.Filename, "a.png")
 }
