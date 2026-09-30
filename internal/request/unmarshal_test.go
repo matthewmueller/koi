@@ -86,6 +86,18 @@ func TestDuplicateJSONQueryField(t *testing.T) {
 	is.True(errors.Is(err, request.ErrDuplicateField))
 }
 
+func TestDuplicateFieldCase(t *testing.T) {
+	is := is.New(t)
+	type Input struct{ Name string }
+	input := Input{}
+	r := httptest.NewRequest(http.MethodPost, "/?NAME=query", strings.NewReader(`{"name":"body"}`))
+	r.Header.Set("Content-Type", "application/json")
+
+	err := request.Unmarshal(r, &input)
+
+	is.True(errors.Is(err, request.ErrDuplicateField))
+}
+
 func TestDuplicateFormQueryField(t *testing.T) {
 	is := is.New(t)
 	type Input struct{ Name string }

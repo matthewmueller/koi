@@ -91,7 +91,8 @@ for handlers with no input or output data.
 
 ## Validation and errors
 
-Use `validate` tags or implement `Validate() koi.Invalid` on your input:
+Use `validate` tags, implement `Validate() koi.Invalid` on your input, or both.
+Field errors from both are merged and named by the `form` tag, then `json`:
 
 ```go
 func (in *CreateBoard) Validate() koi.Invalid {
@@ -103,7 +104,8 @@ func (in *CreateBoard) Validate() koi.Invalid {
 }
 ```
 
-Validation failures return 422 with field errors. HTML currently shows an error
+Validation failures return 422 with field errors. Unsupported content types
+return 415, and bodies over `k.MaxBodySize` return 413. HTML currently shows an error
 page; flash-and-redirect validation is not yet supported.
 
 ```go
@@ -120,7 +122,8 @@ receives `Status`, `Message`, and `Fields`; otherwise Koi supplies a basic page.
 
 Replace `k.Renderer` or `k.Validator` to customize rendering and validation.
 The default renderer uses `html/template` files. Assign a `*slog.Logger` to
-`k.Log` to enable request logging, including underlying errors.
+`k.Log` to enable request logging, including underlying errors. Set
+`k.MaxBodySize` to change the 10MB request body limit, or 0 to disable it.
 
 ## Contributions
 

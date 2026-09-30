@@ -152,3 +152,31 @@ func TestValidatorOverride(t *testing.T) {
 	is.Equal(called, 1)
 	is.Equal(w.Body.String(), "{\"error\":\"Name is already taken\",\"fields\":{\"name\":[\"is already taken\"]}}\n")
 }
+
+type mergedValidation struct {
+	Name  string `json:"name" validate:"required"`
+	Email string `json:"email"`
+}
+
+func (v *mergedValidation) Validate() koi.Invalid {
+	var invalid koi.Invalid
+	invalid.Add("name", "is already taken")
+	invalid.Add("email", "is already taken")
+	return invalid
+}
+
+func TestValidationMerged(t *testing.T) {
+	is := is.New(t)
+	err := koi.New().Validator.Validate(&mergedValidation{})
+	is.Equal(err["name"], []string{"is required", "is already taken"})
+	is.Equal(err["email"], []string{"is already taken"})
+}
+
+func TestValidationFormName(t *testing.T) {
+	is := is.New(t)
+	type input struct {
+		Page int `form:"page_number" json:"page" validate:"required"`
+	}
+	err := koi.New().Validator.Validate(&input{})
+	is.Equal(err["page_number"], []string{"is required"})
+}

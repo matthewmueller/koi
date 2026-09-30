@@ -13,6 +13,8 @@ import (
 	"path"
 	"strings"
 	"time"
+
+	"github.com/matthewmueller/koi/internal/request"
 )
 
 // Route serves a typed controller as an http.Handler. Create routes through
@@ -20,7 +22,7 @@ import (
 // same route; configure it before serving concurrent requests.
 type Route[Out any] struct {
 	k         *Koi
-	handle    func(*http.Request) (Response[Out], error)
+	handle    func(http.ResponseWriter, *http.Request) (Response[Out], error)
 	view      string
 	errorView string
 	status    int
@@ -108,11 +110,11 @@ func (r *Route[Out]) serve(w http.ResponseWriter, req *http.Request) (status int
 		})
 		return http.StatusNotAcceptable, nil
 	}
-	res, err := r.handle(req)
+	res, err := r.handle(w, req)
 
 	if err != nil {
 		// Binding and validation happen inside the route handler wrapper.
-		page := r.k.errorResponse(http.StatusBadRequest, err, "")
+		page := r.k.errorResponse(toErrorStatus(err), err, "")
 		r.writeError(w, req, asHTML, page)
 		return page.Status, err
 	}
@@ -223,6 +225,17 @@ func resolveRedirect(req *http.Request, target string) string {
 		u.Fragment = parsed.Fragment
 	}
 	return u.String()
+}
+
+// toErrorStatus maps an input error to its client error status.
+func toErrorStatus(err error) int {
+	if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
+		return http.StatusRequestEntityTooLarge
+	}
+	if errors.Is(err, request.ErrUnsupportedMediaType) {
+		return http.StatusUnsupportedMediaType
+	}
+	return http.StatusBadRequest
 }
 
 func negotiate(accept string) (bool, bool) {

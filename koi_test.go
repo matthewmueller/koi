@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -475,4 +476,58 @@ func writeView(t testing.TB, content string) string {
 	err := os.WriteFile(name, []byte(content), 0600)
 	is.New(t).NoErr(err)
 	return name
+}
+
+type nameInput struct {
+	Name string `json:"name" form:"name"`
+}
+
+func nameHandler(req *koi.Request[nameInput]) (res koi.Response[koi.Empty]) {
+	return res
+}
+
+func post(t testing.TB, h http.Handler, contentType, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, "/boards", strings.NewReader(body))
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Content-Type", contentType)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	return w
+}
+
+func TestMaxBodySize(t *testing.T) {
+	is := is.New(t)
+	k := koi.New()
+	is.Equal(k.MaxBodySize, int64(10<<20))
+	k.MaxBodySize = 16
+	route := k.Wrap(nameHandler)
+
+	w := post(t, route, "application/json", `{"name":"matt"}`)
+	is.Equal(w.Code, http.StatusNoContent)
+
+	w = post(t, route, "application/json", `{"name":"matthew mueller"}`)
+	is.Equal(w.Code, http.StatusRequestEntityTooLarge)
+	is.Equal(w.Body.String(), "{\"error\":\"Request Entity Too Large\"}\n")
+
+	w = post(t, route, "application/x-www-form-urlencoded", "name=matthew+mueller")
+	is.Equal(w.Code, http.StatusRequestEntityTooLarge)
+
+	var body bytes.Buffer
+	mw := multipart.NewWriter(&body)
+	is.NoErr(mw.WriteField("name", "matthew mueller"))
+	is.NoErr(mw.Close())
+	w = post(t, route, mw.FormDataContentType(), body.String())
+	is.Equal(w.Code, http.StatusRequestEntityTooLarge)
+
+	k.MaxBodySize = 0
+	w = post(t, k.Wrap(nameHandler), "application/json", `{"name":"matthew mueller"}`)
+	is.Equal(w.Code, http.StatusNoContent)
+}
+
+func TestUnsupportedMediaTypeStatus(t *testing.T) {
+	is := is.New(t)
+	w := post(t, koi.New().Wrap(nameHandler), "text/plain", "matt")
+	is.Equal(w.Code, http.StatusUnsupportedMediaType)
+	is.Equal(w.Body.String(), "{\"error\":\"Unsupported Media Type\"}\n")
 }

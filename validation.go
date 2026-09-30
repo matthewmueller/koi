@@ -22,53 +22,77 @@ var _ Validator = (*inputValidator)(nil)
 
 func newValidator() Validator {
 	v := validator.New(validator.WithRequiredStructEnabled())
-	v.RegisterTagNameFunc(func(field reflect.StructField) string {
-		for _, tag := range []string{"json", "form"} {
-			name, _, _ := strings.Cut(field.Tag.Get(tag), ",")
-			if name != "" && name != "-" {
-				return name
-			}
-		}
-		return field.Name
-	})
+	// An empty name falls back to the field name.
+	v.RegisterTagNameFunc(fieldName)
 	return &inputValidator{validator: v}
 }
 
 func (v *inputValidator) Validate(input any) Invalid {
 	value := reflect.ValueOf(input)
-	for value.IsValid() && value.Kind() == reflect.Pointer {
-		// A nil pointer represents absent input and cannot be dereferenced.
-		if value.IsNil() {
-			return nil
+	// Tag errors come first, followed by the input's own Validate errors.
+	result := v.validateTags(value)
+	for field, messages := range validateCustom(value) {
+		for _, message := range messages {
+			result.Add(field, message)
 		}
-		// Check before dereferencing so pointer receiver validators are found.
+	}
+	return result
+}
+
+// validateTags follows pointers to a struct and checks its validate tags.
+func (v *inputValidator) validateTags(value reflect.Value) Invalid {
+	for value.Kind() == reflect.Pointer && !value.IsNil() {
+		value = value.Elem()
+	}
+	if value.Kind() != reflect.Struct {
+		return nil
+	}
+	// Struct unwraps only one pointer, so pass the resolved struct.
+	err := v.validator.Struct(value.Interface())
+	if err == nil {
+		return nil
+	}
+	var result Invalid
+	for _, field := range err.(validator.ValidationErrors) {
+		name := field.Namespace()
+		if value.Type().Name() != "" {
+			_, name, _ = strings.Cut(name, ".")
+		}
+		result.Add(name, validationMessage(field.Tag()))
+	}
+	return result
+}
+
+// validateCustom calls the first Validate method found while following
+// pointers. Checking before dereferencing finds pointer receiver methods.
+func validateCustom(value reflect.Value) Invalid {
+	for value.Kind() == reflect.Pointer && !value.IsNil() {
 		if custom, ok := value.Interface().(interface{ Validate() Invalid }); ok {
 			return custom.Validate()
 		}
-		// Follow pointers until the underlying value can be inspected as a struct.
 		value = value.Elem()
 	}
-	// nil input and pointers that resolve to nil have nothing to validate.
-	if !value.IsValid() {
-		return nil
-	}
+	return nil
+}
 
-	if value.Kind() == reflect.Struct {
-		// Struct unwraps only one pointer; use the struct resolved above for nested pointer inputs.
-		if err := v.validator.Struct(value.Interface()); err != nil {
-			fields := err.(validator.ValidationErrors)
-			var result Invalid
-			for _, field := range fields {
-				name := field.Namespace()
-				if value.Type().Name() != "" {
-					_, name, _ = strings.Cut(name, ".")
-				}
-				result.Add(name, validationMessage(field.Tag()))
-			}
-			return result
+// fieldName resolves a field's name the same way as binding in
+// internal/request, so errors match the submitted keys: the form tag, then the
+// json tag, then the field name. Returns an empty string for ignored fields.
+func fieldName(field reflect.StructField) string {
+	for _, key := range []string{"form", "json"} {
+		tag, ok := field.Tag.Lookup(key)
+		if !ok {
+			continue
+		}
+		name, _, _ := strings.Cut(tag, ",")
+		if name == "-" {
+			return ""
+		}
+		if name != "" {
+			return name
 		}
 	}
-	return nil
+	return field.Name
 }
 
 func validationMessage(tag string) string {

@@ -20,8 +20,13 @@ type Koi struct {
 	// A nil Renderer causes HTML body rendering to fail with 500.
 	Renderer Renderer
 	// Validator checks bound input before the controller runs. New supplies
-	// tag validation followed by the input’s Validate method, if present.
+	// tag validation and the input’s Validate method, if present, and merges
+	// their field errors.
 	Validator Validator
+	// MaxBodySize limits the request body bytes read while binding input.
+	// Larger bodies are rejected with 413. New sets it to 10MB; zero or
+	// negative disables the limit.
+	MaxBodySize int64
 	// Debug exposes underlying error messages in responses. It defaults to false.
 	Debug bool
 	// Log records method, path, status, duration, and underlying errors.
@@ -31,19 +36,24 @@ type Koi struct {
 	Log *slog.Logger
 }
 
-// New creates a dispatcher with HTML templates, validation, and a discard logger.
+// defaultMaxBodySize is the request body limit configured by New.
+const defaultMaxBodySize = 10 << 20
+
+// New creates a dispatcher with HTML templates, validation, a 10MB body limit,
+// and a discard logger.
 func New() *Koi {
 	return &Koi{
-		Renderer:  &htmlTemplate{},
-		Validator: newValidator(),
-		Log:       slog.New(slog.DiscardHandler),
+		Renderer:    &htmlTemplate{},
+		Validator:   newValidator(),
+		MaxBodySize: defaultMaxBodySize,
+		Log:         slog.New(slog.DiscardHandler),
 	}
 }
 
 // Wrap a koi handler as an http.Handler. It unmarshals input, validates it, and
 // negotiates the response.
 func (k *Koi) Wrap[In, Out any](handler Handler[In, Out]) *Route[Out] {
-	return &Route[Out]{k: k, handle: func(r *http.Request) (Response[Out], error) {
+	return &Route[Out]{k: k, handle: func(w http.ResponseWriter, r *http.Request) (Response[Out], error) {
 		req := &Request[In]{Request: r}
 
 		// Skip reading and validating if the input is empty
@@ -52,6 +62,9 @@ func (k *Koi) Wrap[In, Out any](handler Handler[In, Out]) *Route[Out] {
 		}
 
 		// Read and validate the input
+		if k.MaxBodySize > 0 {
+			r.Body = http.MaxBytesReader(w, r.Body, k.MaxBodySize)
+		}
 		if err := request.Unmarshal(r, &req.Input); err != nil {
 			return Response[Out]{}, err
 		}

@@ -38,8 +38,13 @@ func Unmarshal(r *http.Request, v any) error {
 		if err != nil {
 			return err
 		}
-		for field := range query {
-			if _, ok := fields[field]; ok {
+		// Decoding matches names case-insensitively, so duplicates must too.
+		seen := make(map[string]bool, len(fields))
+		for field := range fields {
+			seen[strings.ToLower(field)] = true
+		}
+		for _, field := range slices.Sorted(maps.Keys(query)) {
+			if seen[strings.ToLower(field)] {
 				return fmt.Errorf("%w %q", ErrDuplicateField, field)
 			}
 		}
