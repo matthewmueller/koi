@@ -1,3 +1,7 @@
+# 0.1.2 / 2026-09-29
+
+- limit body size, map 413/415, and fix validation and duplicate field names
+
 # 0.1.1 / 2026-09-29
 
 - add support for multipart uploads
