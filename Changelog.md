@@ -1,3 +1,7 @@
+# 0.1.3 / 2026-10-02
+
+- send json to browsers if there's no view
+
 # 0.1.2 / 2026-09-29
 
 - limit body size, map 413/415, and fix validation and duplicate field names
