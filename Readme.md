@@ -139,7 +139,9 @@ type Handler[In, Out any] func(*Request[In]) Response[Out]
 
 `Request[In]` embeds `*http.Request` and provides decoded input through `Input`.
 `req.Accepts("html")` and `req.Accepts("json")` check accepted representations.
-Missing `Accept` headers and equal preferences select JSON.
+Missing `Accept` headers and equal preferences select JSON. Responses without a
+view are also sent as JSON when the client accepts it, so browsers can read JSON
+routes.
 
 ### Routes
 

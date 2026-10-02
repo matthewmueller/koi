@@ -175,11 +175,16 @@ func (r *Route[Out]) serve(w http.ResponseWriter, req *http.Request) (status int
 
 	// Render or encode before writing headers, so failures can still become 500.
 	var buf bytes.Buffer
+	view := res.view
+	if view == "" {
+		view = r.view
+	}
+	// Without a view, serve JSON to clients that also accept it, like browsers
+	// that send "text/html, */*;q=0.8"
+	if asHTML && view == "" && quality(req.Header.Get("Accept"), mediaType("json")) > 0 {
+		asHTML = false
+	}
 	if asHTML {
-		view := res.view
-		if view == "" {
-			view = r.view
-		}
 		if view == "" {
 			err = errors.New("HTML response has no view; configure Route.View, Response.Render, or Route.Redirect")
 		} else {

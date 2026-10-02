@@ -341,6 +341,15 @@ func TestMissingHTMLView(t *testing.T) {
 	is.True(strings.Contains(w.Body.String(), "HTML response has no view"))
 }
 
+func TestMissingHTMLViewJSON(t *testing.T) {
+	is := is.New(t)
+	route := koi.New().Wrap(boardHandler)
+	w := serve(t, route, "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+	is.Equal(w.Code, http.StatusOK)
+	is.Equal(w.Header().Get("Content-Type"), "application/json")
+	is.Equal(w.Body.String(), "{\"id\":\"42\"}\n")
+}
+
 func TestNegotiation(t *testing.T) {
 	is := is.New(t)
 	k := koi.New()
