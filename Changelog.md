@@ -1,3 +1,7 @@
+# 0.1.4 / 2026-10-06
+
+- validate outgoing structs as well with the `validate` tag or a `Validate() koi.Invalid` method; invalid response bodies return 500
+
 # 0.1.3 / 2026-10-02
 
 - send json to browsers if there's no view
