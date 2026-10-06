@@ -108,6 +108,10 @@ Validation failures return 422 with field errors. Unsupported content types
 return 415, and bodies over `k.MaxBodySize` return 413. HTML currently shows an error
 page; flash-and-redirect validation is not yet supported.
 
+Response bodies are validated the same way before they're sent. An invalid
+response body is a server bug, so it returns 500 and its field errors are
+only exposed with `k.Debug`.
+
 ```go
 return res.Status(404).Errorf("board %s was not found", id)
 ```

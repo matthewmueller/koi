@@ -5,6 +5,7 @@ import (
 	_ "embed"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"html/template"
 	"io"
 	"log/slog"
@@ -171,6 +172,15 @@ func (r *Route[Out]) serve(w http.ResponseWriter, req *http.Request) (status int
 	if !res.hasBody || status == http.StatusNoContent || status == http.StatusNotModified {
 		w.WriteHeader(status)
 		return status, nil
+	}
+
+	// An invalid response body is a server bug, so it becomes a 500 rather than
+	// a 422. Format with %v so the fields aren't treated as client input errors.
+	if invalid := r.k.Validator.Validate(&res.body); invalid != nil {
+		status = http.StatusInternalServerError
+		err = fmt.Errorf("koi: invalid response body: %v", invalid)
+		r.writeError(w, req, asHTML, r.k.errorResponse(status, err, ""))
+		return status, err
 	}
 
 	// Render or encode before writing headers, so failures can still become 500.

@@ -540,3 +540,46 @@ func TestUnsupportedMediaTypeStatus(t *testing.T) {
 	is.Equal(w.Code, http.StatusUnsupportedMediaType)
 	is.Equal(w.Body.String(), "{\"error\":\"Unsupported Media Type\"}\n")
 }
+
+type validatedBoard struct {
+	ID string `json:"id" validate:"required"`
+}
+
+func (b *validatedBoard) Validate() koi.Invalid {
+	if b.ID == "secret" {
+		return koi.Invalid{"id": {"is reserved"}}
+	}
+	return nil
+}
+
+func TestResponseValidation(t *testing.T) {
+	is := is.New(t)
+	k := koi.New()
+	var logs bytes.Buffer
+	k.Log = slog.New(slog.NewJSONHandler(&logs, nil))
+	id := ""
+	route := k.Wrap(func(req *koi.Request[koi.Empty]) (res koi.Response[validatedBoard]) {
+		return res.Body(validatedBoard{ID: id})
+	}).View("missing.html")
+	// Invalid bodies are server errors, and their fields stay private.
+	w := serve(t, route, "application/json")
+	is.Equal(w.Code, 500)
+	is.Equal(w.Body.String(), "{\"error\":\"Internal Server Error\"}\n")
+	var record map[string]any
+	is.NoErr(json.NewDecoder(&logs).Decode(&record))
+	is.Equal(record["error"], "koi: invalid response body: Id is required")
+	// HTML responses are validated before rendering.
+	w = serve(t, route, "text/html")
+	is.Equal(w.Code, 500)
+	is.True(!strings.Contains(w.Body.String(), "is required"))
+	// Custom Validate methods also run.
+	id = "secret"
+	k.Debug = true
+	w = serve(t, route, "application/json")
+	is.Equal(w.Code, 500)
+	is.True(strings.Contains(w.Body.String(), "koi: invalid response body: Id is reserved"))
+	// Valid bodies are sent.
+	id = "42"
+	w = serve(t, route, "application/json")
+	is.Equal(w.Code, 200)
+}

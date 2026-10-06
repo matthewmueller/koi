@@ -19,9 +19,9 @@ type Koi struct {
 	// Renderer renders HTML bodies. New supplies a renderer that parses template files by name.
 	// A nil Renderer causes HTML body rendering to fail with 500.
 	Renderer Renderer
-	// Validator checks bound input before the controller runs. New supplies
-	// tag validation and the input’s Validate method, if present, and merges
-	// their field errors.
+	// Validator checks bound input before the controller runs and response
+	// bodies before they are sent. New supplies tag validation and the
+	// value’s Validate method, if present, and merges their field errors.
 	Validator Validator
 	// MaxBodySize limits the request body bytes read while binding input.
 	// Larger bodies are rejected with 413. New sets it to 10MB; zero or
