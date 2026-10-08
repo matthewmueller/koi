@@ -583,3 +583,19 @@ func TestResponseValidation(t *testing.T) {
 	w = serve(t, route, "application/json")
 	is.Equal(w.Code, 200)
 }
+
+type boardLanes struct {
+	Lanes []string       `json:"lanes"`
+	Meta  map[string]int `json:"meta"`
+}
+
+func TestNilSlicesEncodeEmpty(t *testing.T) {
+	is := is.New(t)
+	k := koi.New()
+	route := k.Wrap(func(req *koi.Request[koi.Empty]) (res koi.Response[boardLanes]) {
+		return res.Body(boardLanes{})
+	})
+	w := serve(t, route, "application/json")
+	is.Equal(w.Code, 200)
+	is.Equal(w.Body.String(), "{\"lanes\":[],\"meta\":{}}\n")
+}

@@ -3,7 +3,8 @@ package koi
 import (
 	"bytes"
 	_ "embed"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"html/template"
@@ -341,10 +342,9 @@ func writeBody(w http.ResponseWriter, r *http.Request, status int, body []byte) 
 }
 
 func (r *Route[Out]) encodeJson(w io.Writer, v any) error {
-	enc := json.NewEncoder(w)
-	enc.SetEscapeHTML(false)
+	var opts []json.Options
 	if r.k.Debug {
-		enc.SetIndent("", "\t")
+		opts = append(opts, jsontext.WithIndent("\t"))
 	}
-	return enc.Encode(v)
+	return json.MarshalEncode(jsontext.NewEncoder(w, opts...), v)
 }
