@@ -1,3 +1,7 @@
+# 0.1.5 / 2026-10-07
+
+- switch to `encoding/json/v2` to support nil maps and arrays defaulting to `{}` and `[]`
+
 # 0.1.4 / 2026-10-06
 
 - validate outgoing structs as well with the `validate` tag or a `Validate() koi.Invalid` method; invalid response bodies return 500
