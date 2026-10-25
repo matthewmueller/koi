@@ -707,6 +707,87 @@ func TestDuplicateBracketQueryField(t *testing.T) {
 	is.True(errors.Is(err, request.ErrDuplicateField))
 }
 
+func TestQueryRepeated(t *testing.T) {
+	is := is.New(t)
+	var input struct {
+		Types []string `form:"types"`
+	}
+	r := httptest.NewRequest(http.MethodGet, "/?types=a&types=b", nil)
+	err := request.Unmarshal(r, &input)
+	is.NoErr(err)
+	is.Equal(input.Types, []string{"a", "b"})
+}
+
+func TestQuerySingleSlice(t *testing.T) {
+	is := is.New(t)
+	var input struct {
+		Types []string `form:"types"`
+	}
+	r := httptest.NewRequest(http.MethodGet, "/?types=a", nil)
+	err := request.Unmarshal(r, &input)
+	is.NoErr(err)
+	is.Equal(input.Types, []string{"a"})
+}
+
+func TestQueryRepeatedCase(t *testing.T) {
+	is := is.New(t)
+	var input struct {
+		Types []string `form:"types"`
+	}
+	r := httptest.NewRequest(http.MethodGet, "/?TYPES=a", nil)
+	err := request.Unmarshal(r, &input)
+	is.NoErr(err)
+	is.Equal(input.Types, []string{"a"})
+}
+
+func TestQueryRepeatedInts(t *testing.T) {
+	is := is.New(t)
+	var input struct {
+		Ids []int `form:"ids"`
+	}
+	r := httptest.NewRequest(http.MethodGet, "/?ids=1&ids=2", nil)
+	err := request.Unmarshal(r, &input)
+	is.NoErr(err)
+	is.Equal(input.Ids, []int{1, 2})
+	r = httptest.NewRequest(http.MethodGet, "/?ids=x", nil)
+	err = request.Unmarshal(r, &input)
+	is.True(err != nil)
+}
+
+func TestQueryBytes(t *testing.T) {
+	is := is.New(t)
+	var input struct {
+		Raw []byte `form:"raw"`
+	}
+	r := httptest.NewRequest(http.MethodGet, "/?raw=hello", nil)
+	err := request.Unmarshal(r, &input)
+	is.NoErr(err)
+	is.Equal(string(input.Raw), "hello")
+}
+
+func TestFormRepeatedBody(t *testing.T) {
+	is := is.New(t)
+	var input struct {
+		Tags []string `form:"tags"`
+	}
+	r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("tags=a&tags=b"))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	err := request.Unmarshal(r, &input)
+	is.NoErr(err)
+	is.Equal(input.Tags, []string{"a", "b"})
+}
+
+func TestDuplicateRepeatedQueryField(t *testing.T) {
+	is := is.New(t)
+	var input struct {
+		Tags []string `form:"tags"`
+	}
+	r := httptest.NewRequest(http.MethodPost, "/?tags=a", strings.NewReader("tags=b"))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	err := request.Unmarshal(r, &input)
+	is.True(errors.Is(err, request.ErrDuplicateField))
+}
+
 func TestPointer(t *testing.T) {
 	is := is.New(t)
 	type Input struct {

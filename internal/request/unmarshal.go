@@ -90,7 +90,7 @@ func unmarshalBody(r *http.Request, v any) (url.Values, error) {
 }
 
 func unmarshalValues(v any, values url.Values) error {
-	values, err := normalize(values)
+	values, err := normalize(v, values)
 	if err != nil {
 		return err
 	}
@@ -100,18 +100,47 @@ func unmarshalValues(v any, values url.Values) error {
 	return dec.DecodeValues(v, values)
 }
 
-// normalize rewrites bracket keys like tags[] and created_at[gte] into
-// ajg/form's dot syntax. It copies because values may be the request's form.
-func normalize(values url.Values) (url.Values, error) {
+// normalize rewrites keys into ajg/form's dot syntax. Bracket keys like
+// tags[] and created_at[gte] become tags._ and created_at.gte, and bare keys
+// of top-level slice fields become implicitly indexed, so tags=a&tags=b
+// decodes like tags._=a&tags._=b. It copies because values may be the
+// request's form.
+func normalize(v any, values url.Values) (url.Values, error) {
+	sliceKeys := sliceFields(v)
 	normalized := make(url.Values, len(values))
 	for key, vals := range values {
 		key, err := bracketKey(key)
 		if err != nil {
 			return nil, err
 		}
+		if sliceKeys[strings.ToLower(key)] {
+			key += "._"
+		}
 		normalized[key] = append(normalized[key], vals...)
 	}
 	return normalized, nil
+}
+
+// sliceFields returns the lowercased names of top-level slice fields, other
+// than byte slices which decode from a single string
+func sliceFields(v any) map[string]bool {
+	t := reflect.TypeOf(v)
+	for t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+	if t.Kind() != reflect.Struct {
+		return nil
+	}
+	names := map[string]bool{}
+	for field := range t.Fields() {
+		if !field.IsExported() || field.Type.Kind() != reflect.Slice || field.Type.Elem().Kind() == reflect.Uint8 {
+			continue
+		}
+		if name := fieldName(field); name != "" {
+			names[strings.ToLower(name)] = true
+		}
+	}
+	return names
 }
 
 var segmentEscaper = strings.NewReplacer(`\`, `\\`, ".", `\.`)
