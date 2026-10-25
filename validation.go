@@ -67,7 +67,7 @@ func (v *inputValidator) validateTags(value reflect.Value) Invalid {
 // pointers. Checking before dereferencing finds pointer receiver methods.
 func validateCustom(value reflect.Value) Invalid {
 	for value.Kind() == reflect.Pointer && !value.IsNil() {
-		if custom, ok := value.Interface().(interface{ Validate() Invalid }); ok {
+		if custom, ok := reflect.TypeAssert[interface{ Validate() Invalid }](value); ok {
 			return custom.Validate()
 		}
 		value = value.Elem()
