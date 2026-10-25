@@ -1,3 +1,10 @@
+# 0.2.0 / 2026-10-25
+
+- add: decode bracket keys like `types[]=a&types[]=b` and `created_at[gte]=…` in queries and form bodies, as sent by the Anthropic SDKs, Rails and jQuery
+- add: decode repeated `tags=a&tags=b`, or a single `tags=a`, into slice fields
+- **BREAKING:** a query key now conflicts with a body field that shares its top-level name (e.g. `?tags.0=a` with `{"tags":[…]}`) and returns 400; previously the body silently won
+- **BREAKING:** malformed bracket keys like `a[` or `a[][b]` return 400
+
 # 0.1.5 / 2026-10-07
 
 - switch to `encoding/json/v2` to support nil maps and arrays defaulting to `{}` and `[]`
