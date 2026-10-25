@@ -38,18 +38,28 @@ func Unmarshal(r *http.Request, v any) error {
 		if err != nil {
 			return err
 		}
-		// Decoding matches names case-insensitively, so duplicates must too.
+		// Compare root names, so tags.0=a in the query collides with tags in
+		// the body.
 		seen := make(map[string]bool, len(fields))
 		for field := range fields {
-			seen[strings.ToLower(field)] = true
+			seen[rootName(field)] = true
 		}
 		for _, field := range slices.Sorted(maps.Keys(query)) {
-			if seen[strings.ToLower(field)] {
+			if seen[rootName(field)] {
 				return fmt.Errorf("%w %q", ErrDuplicateField, field)
 			}
 		}
 	}
 	return nil
+}
+
+// rootName returns the lowercased top-level field name of a key. Decoding
+// matches names case-insensitively, so duplicates must too.
+func rootName(key string) string {
+	if i := strings.IndexAny(key, ".["); i >= 0 {
+		key = key[:i]
+	}
+	return strings.ToLower(key)
 }
 
 func unmarshalBody(r *http.Request, v any) (url.Values, error) {

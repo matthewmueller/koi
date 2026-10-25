@@ -110,6 +110,34 @@ func TestDuplicateFormQueryField(t *testing.T) {
 	is.True(errors.Is(err, request.ErrDuplicateField))
 }
 
+func TestDuplicateNestedQueryField(t *testing.T) {
+	is := is.New(t)
+	type Input struct {
+		Tags []string `json:"tags"`
+	}
+	input := Input{}
+	r := httptest.NewRequest(http.MethodPost, "/?tags._=a", strings.NewReader(`{"tags":["b"]}`))
+	r.Header.Set("Content-Type", "application/json")
+
+	err := request.Unmarshal(r, &input)
+
+	is.True(errors.Is(err, request.ErrDuplicateField))
+}
+
+func TestDuplicateNestedFormQueryField(t *testing.T) {
+	is := is.New(t)
+	type Input struct {
+		Tags []string `form:"tags"`
+	}
+	input := Input{}
+	r := httptest.NewRequest(http.MethodPost, "/?tags.0=a", strings.NewReader("tags.1=b"))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	err := request.Unmarshal(r, &input)
+
+	is.True(errors.Is(err, request.ErrDuplicateField))
+}
+
 func TestJSONSuffixMediaType(t *testing.T) {
 	is := is.New(t)
 	type Input struct{ Name string }
