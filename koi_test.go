@@ -599,3 +599,23 @@ func TestNilSlicesEncodeEmpty(t *testing.T) {
 	is.Equal(w.Code, 200)
 	is.Equal(w.Body.String(), "{\"lanes\":[],\"meta\":{}}\n")
 }
+
+type eventQuery struct {
+	Types []string `form:"types" json:"types"`
+	Limit int      `form:"limit" json:"limit"`
+	Order string   `form:"order" json:"order"`
+}
+
+func TestQueryArrays(t *testing.T) {
+	is := is.New(t)
+	route := koi.New().Wrap(func(req *koi.Request[eventQuery]) (res koi.Response[eventQuery]) {
+		return res.Body(req.Input)
+	})
+	// Encoded like anthropic-sdk-go's ArrayQueryFormatBrackets
+	req := httptest.NewRequest(http.MethodGet, "/events?limit=1&order=desc&types%5B%5D=session.status_idle&types%5B%5D=session.error", nil)
+	req.Header.Set("Accept", "application/json")
+	w := httptest.NewRecorder()
+	route.ServeHTTP(w, req)
+	is.Equal(w.Code, http.StatusOK)
+	is.Equal(w.Body.String(), `{"types":["session.status_idle","session.error"],"limit":1,"order":"desc"}`+"\n")
+}

@@ -21,6 +21,7 @@ import (
 var (
 	ErrUnsupportedMediaType = errors.New("unsupported media type")
 	ErrDuplicateField       = errors.New("duplicate request field")
+	ErrInvalidKey           = errors.New("invalid request key")
 )
 
 // Unmarshal decodes query and body values using json and form tags.
@@ -89,10 +90,62 @@ func unmarshalBody(r *http.Request, v any) (url.Values, error) {
 }
 
 func unmarshalValues(v any, values url.Values) error {
+	values, err := normalize(values)
+	if err != nil {
+		return err
+	}
 	dec := form.NewDecoder(nil)
 	dec.IgnoreCase(true)
 	dec.IgnoreUnknownKeys(true)
 	return dec.DecodeValues(v, values)
+}
+
+// normalize rewrites bracket keys like tags[] and created_at[gte] into
+// ajg/form's dot syntax. It copies because values may be the request's form.
+func normalize(values url.Values) (url.Values, error) {
+	normalized := make(url.Values, len(values))
+	for key, vals := range values {
+		key, err := bracketKey(key)
+		if err != nil {
+			return nil, err
+		}
+		normalized[key] = append(normalized[key], vals...)
+	}
+	return normalized, nil
+}
+
+var segmentEscaper = strings.NewReplacer(`\`, `\\`, ".", `\.`)
+
+// bracketKey rewrites a[b][c] to a.b.c and a[] to a._
+func bracketKey(key string) (string, error) {
+	root, rest, ok := strings.Cut(key, "[")
+	if !ok {
+		return key, nil
+	}
+	var path strings.Builder
+	path.WriteString(root)
+	for {
+		segment, after, ok := strings.Cut(rest, "]")
+		if !ok {
+			return "", fmt.Errorf("%w %q", ErrInvalidKey, key)
+		}
+		if segment == "" && after != "" {
+			// ajg/form only indexes implicitly at the last level
+			return "", fmt.Errorf("%w %q", ErrInvalidKey, key)
+		}
+		if segment == "" {
+			segment = "_"
+		}
+		path.WriteString(".")
+		path.WriteString(segmentEscaper.Replace(segment))
+		if after == "" {
+			return path.String(), nil
+		}
+		if after[0] != '[' {
+			return "", fmt.Errorf("%w %q", ErrInvalidKey, key)
+		}
+		rest = after[1:]
+	}
 }
 
 func unmarshalForm(r *http.Request, v any) (url.Values, error) {

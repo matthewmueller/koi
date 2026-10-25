@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ajg/form"
 	"github.com/matryer/is"
@@ -624,6 +625,88 @@ func TestFormImplicitArrayBody(t *testing.T) {
 	is.Equal(input.Categories, []string{"a", "b", "c"})
 }
 
+func TestQueryBrackets(t *testing.T) {
+	is := is.New(t)
+	var input struct {
+		Types []string `form:"types"`
+	}
+	r := httptest.NewRequest(http.MethodGet, "/?types[]=a&types[]=b", nil)
+	err := request.Unmarshal(r, &input)
+	is.NoErr(err)
+	is.Equal(input.Types, []string{"a", "b"})
+}
+
+func TestQueryBracketIndex(t *testing.T) {
+	is := is.New(t)
+	var input struct {
+		Types []string `form:"types"`
+	}
+	r := httptest.NewRequest(http.MethodGet, "/?types[1]=b&types[0]=a", nil)
+	err := request.Unmarshal(r, &input)
+	is.NoErr(err)
+	is.Equal(input.Types, []string{"a", "b"})
+}
+
+func TestQueryNestedBrackets(t *testing.T) {
+	is := is.New(t)
+	var input struct {
+		CreatedAt struct {
+			Gte time.Time `form:"gte"`
+		} `form:"created_at"`
+	}
+	r := httptest.NewRequest(http.MethodGet, "/?created_at[gte]=2026-10-24T01:02:03Z", nil)
+	err := request.Unmarshal(r, &input)
+	is.NoErr(err)
+	is.Equal(input.CreatedAt.Gte, time.Date(2026, 10, 24, 1, 2, 3, 0, time.UTC))
+}
+
+func TestQueryBracketMap(t *testing.T) {
+	is := is.New(t)
+	var input struct {
+		Meta map[string]string `form:"meta"`
+	}
+	r := httptest.NewRequest(http.MethodGet, "/?meta[a.b]=1&meta[c]=2", nil)
+	err := request.Unmarshal(r, &input)
+	is.NoErr(err)
+	is.Equal(input.Meta, map[string]string{"a.b": "1", "c": "2"})
+}
+
+func TestFormBracketsBody(t *testing.T) {
+	is := is.New(t)
+	var input struct {
+		Tags []string `form:"tags"`
+	}
+	r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("tags[]=a&tags[]=b"))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	err := request.Unmarshal(r, &input)
+	is.NoErr(err)
+	is.Equal(input.Tags, []string{"a", "b"})
+}
+
+func TestInvalidBracketKey(t *testing.T) {
+	is := is.New(t)
+	var input struct {
+		Types []string `form:"types"`
+	}
+	r := httptest.NewRequest(http.MethodGet, "/?types[][x]=a", nil)
+	err := request.Unmarshal(r, &input)
+	is.True(errors.Is(err, request.ErrInvalidKey))
+	r = httptest.NewRequest(http.MethodGet, "/?types[=a", nil)
+	err = request.Unmarshal(r, &input)
+	is.True(errors.Is(err, request.ErrInvalidKey))
+}
+
+func TestDuplicateBracketQueryField(t *testing.T) {
+	is := is.New(t)
+	var input struct {
+		Tags []string `json:"tags"`
+	}
+	r := httptest.NewRequest(http.MethodPost, "/?tags[]=a", strings.NewReader(`{"tags":["b"]}`))
+	r.Header.Set("Content-Type", "application/json")
+	err := request.Unmarshal(r, &input)
+	is.True(errors.Is(err, request.ErrDuplicateField))
+}
+
 func TestPointer(t *testing.T) {
 	is := is.New(t)
 	type Input struct {
@@ -832,11 +915,13 @@ func TestMultipartValues(t *testing.T) {
 		Title  string   `json:"title"`
 		Remove []int    `json:"remove"`
 		Tags   []string `form:"tags"`
+		Ids    []int    `form:"ids"`
 	}
 	r, err := multipartRequest(map[string][]string{
 		"title":    {"hello"},
 		"remove._": {"1", "2"},
 		"tags._":   {"a"},
+		"ids[]":    {"3", "4"},
 	}, nil)
 	is.NoErr(err)
 
@@ -846,6 +931,7 @@ func TestMultipartValues(t *testing.T) {
 	is.Equal(input.Title, "hello")
 	is.Equal(input.Remove, []int{1, 2})
 	is.Equal(input.Tags, []string{"a"})
+	is.Equal(input.Ids, []int{3, 4})
 }
 
 func TestMultipartFile(t *testing.T) {
