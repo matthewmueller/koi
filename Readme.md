@@ -11,6 +11,7 @@ Koi handles binding, validation, and HTML/JSON responses.
 - Automatic query, form, and JSON binding
 - Validation with client-facing field errors
 - HTML/JSON negotiation using the request's `Accept` header
+- Layouts that load their own data alongside the page
 - Pluggable rendering and validation
 - Works with `net/http` routers and middleware
 
@@ -89,6 +90,50 @@ to the current path. A target beginning with `/` or an absolute `http://` or
 JSON requests receive the response body when one is present. Use `koi.Empty`
 for handlers with no input or output data.
 
+## Parents
+
+A route can render inside another route's view. The parent has its own handler,
+which loads the data for its view while the page's handler runs:
+
+```go
+type NavInput struct {
+	Tab string `form:"tab"`
+}
+
+type Nav struct {
+	Tab string
+}
+
+func loadNav(req *koi.Request[NavInput]) (res koi.Response[Nav]) {
+	return res.Body(Nav{Tab: req.Input.Tab})
+}
+
+layout := k.Wrap(loadNav).View("layout.html")
+
+router.Handle("GET /hello", k.Wrap(greet).View("hello.html").Parent(layout))
+router.Handle("GET /bye", k.Wrap(bye).View("bye.html").Parent(layout))
+```
+
+With the default renderer, the parent's template places the page with `slot`:
+
+```html
+<nav>{{.Tab}}</nav>
+<main>{{slot}}</main>
+```
+
+- **Parents only run for HTML requests.** JSON requests get the page's data
+  alone, so check access in middleware or the page's handler, not in a parent.
+- **A parent binds its input from the query string.** The request body belongs
+  to the page.
+- **A parent's error or redirect replaces the page.** `res.Status(404).Error(err)`
+  in a parent sends the 404 error page.
+- **A parent can have a parent**, like `shell.Parent(layout)`. Views render
+  outermost first.
+- **The page's headers win** when a parent sets the same one. An error or
+  redirect carries only the headers of the route that returned it.
+- **Only the parent's handler and view are used.** Its `Status`, `Redirect` and
+  `ErrorView` are ignored.
+
 ## Validation and errors
 
 Use `validate` tags, implement `Validate() koi.Invalid` on your input, or both.
@@ -155,6 +200,7 @@ routes.
 | Method | Behavior |
 | --- | --- |
 | `View(name)` | Set the default HTML template filename. |
+| `Parent(route)` | Render inside the route's view, with data from its handler. |
 | `ErrorView(name)` | Set the HTML error template; failed rendering uses the built-in page. |
 | `Status(code)` | Set the default success status. |
 | `Redirect(target)` | Redirect successful HTML responses; relative targets append to the current path. |
@@ -191,8 +237,13 @@ type Validator interface {
 	Validate(any) Invalid
 }
 
+type View = struct {
+	Name  string
+	Props any
+}
+
 type Renderer interface {
-	Render(context.Context, io.Writer, string, any) error
+	Render(ctx context.Context, w io.Writer, views ...View) error
 }
 
 type ResponseError struct {
@@ -204,3 +255,7 @@ type ResponseError struct {
 
 Replace `k.Validator` or `k.Renderer` to implement these interfaces. Custom error
 templates receive `*ResponseError`; ordinary templates receive the response body.
+
+`Render` receives the page's parents, outermost first, followed by the page.
+`View` is an alias of an unnamed struct, so a renderer can declare the same type
+and implement `Renderer` without importing Koi.

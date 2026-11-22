@@ -8,7 +8,13 @@ import (
 // Response is an outcome. Its zero value is an empty successful response.
 // Builder methods return a copy, so return or assign their result.
 type Response[Out any] struct {
-	body     Out
+	body Out
+	outcome
+}
+
+// outcome is everything a response decides besides its body. It has no type
+// parameter, so a page and parents with other body types can share code.
+type outcome struct {
 	hasBody  bool
 	view     string
 	redirect string

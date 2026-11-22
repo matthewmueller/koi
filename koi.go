@@ -53,12 +53,12 @@ func New() *Koi {
 // Wrap a koi handler as an http.Handler. It unmarshals input, validates it, and
 // negotiates the response.
 func (k *Koi) Wrap[In, Out any](handler Handler[In, Out]) *Route[Out] {
-	return &Route[Out]{k: k, handle: func(w http.ResponseWriter, r *http.Request) (Response[Out], error) {
+	return &Route[Out]{k: k, handle: func(w http.ResponseWriter, r *http.Request) (res Response[Out]) {
 		req := &Request[In]{Request: r}
 
 		// Skip reading and validating if the input is empty
 		if _, ok := any(req.Input).(Empty); ok {
-			return handler(req), nil
+			return handler(req)
 		}
 
 		// Read and validate the input
@@ -66,12 +66,12 @@ func (k *Koi) Wrap[In, Out any](handler Handler[In, Out]) *Route[Out] {
 			r.Body = http.MaxBytesReader(w, r.Body, k.MaxBodySize)
 		}
 		if err := request.Unmarshal(r, &req.Input); err != nil {
-			return Response[Out]{}, err
+			return res.Status(toErrorStatus(err)).Error(err)
 		}
 		if invalid := k.Validator.Validate(&req.Input); invalid != nil {
-			return Response[Out]{}, invalid
+			return res.Status(http.StatusUnprocessableEntity).Error(invalid)
 		}
 
-		return handler(req), nil
+		return handler(req)
 	}}
 }

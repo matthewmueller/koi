@@ -2,8 +2,10 @@ package koi_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"mime/multipart"
@@ -13,6 +15,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/matryer/is"
 	"github.com/matthewmueller/koi"
@@ -121,7 +124,6 @@ func TestRepresentations(t *testing.T) {
 func TestRedirects(t *testing.T) {
 	is := is.New(t)
 	k := koi.New()
-	empty := func(req *koi.Request[koi.Empty]) (res koi.Response[koi.Empty]) { return res }
 	route := k.Wrap(func(req *koi.Request[koi.Empty]) (res koi.Response[board]) {
 		return res.Redirect("/login")
 	})
@@ -136,7 +138,7 @@ func TestRedirects(t *testing.T) {
 	is.Equal(w.Header().Get("Location"), "/boards/chosen")
 	w = serve(t, route, "application/json")
 	is.Equal(w.Code, 200)
-	emptyRoute := k.Wrap(empty).Redirect("10")
+	emptyRoute := k.Wrap(emptyHandler).Redirect("10")
 	w = serve(t, emptyRoute, "text/html")
 	is.Equal(w.Header().Get("Location"), "/boards/10")
 	responseRoute := k.Wrap(func(req *koi.Request[koi.Empty]) (res koi.Response[koi.Empty]) {
@@ -176,13 +178,13 @@ func TestRedirects(t *testing.T) {
 	w = httptest.NewRecorder()
 	responseRoute.ServeHTTP(w, req)
 	is.Equal(w.Header().Get("Location"), "/boards/10?page=2")
-	deletion := k.Wrap(empty).Status(http.StatusNoContent).Redirect("/boards")
+	deletion := k.Wrap(emptyHandler).Status(http.StatusNoContent).Redirect("/boards")
 	w = serve(t, deletion, "text/html")
 	is.Equal(w.Code, 303)
 	w = serve(t, deletion, "application/json")
 	is.Equal(w.Code, 204)
 	is.Equal(w.Body.Len(), 0)
-	w = serve(t, k.Wrap(empty), "application/json")
+	w = serve(t, k.Wrap(emptyHandler), "application/json")
 	is.Equal(w.Code, 204)
 }
 
@@ -296,11 +298,12 @@ func TestErrorViewPartialFallback(t *testing.T) {
 	is := is.New(t)
 	k := koi.New()
 	route := k.Wrap(func(req *koi.Request[koi.Empty]) (res koi.Response[board]) {
-		return res.Status(404).Header("Content-Length", "999").Error(errors.New("private"))
+		return res.Status(404).Header("Content-Length", "999").Header("X-Board", "42").Error(errors.New("private"))
 	}).ErrorView(writeView(t, `partial secret {{.Missing}}`))
 	w := serve(t, route, "text/html")
 	is.Equal(w.Code, 404)
 	is.Equal(w.Header().Get("Content-Length"), "")
+	is.Equal(w.Header().Get("X-Board"), "42")
 	is.True(!strings.Contains(w.Body.String(), "partial secret"))
 	is.True(strings.Contains(w.Body.String(), "Not Found"))
 }
@@ -339,6 +342,10 @@ func TestMissingHTMLView(t *testing.T) {
 	w := serve(t, route, "text/html")
 	is.Equal(w.Code, http.StatusInternalServerError)
 	is.True(strings.Contains(w.Body.String(), "HTML response has no view"))
+	parent := k.Wrap(navHandler)
+	w = serve(t, k.Wrap(boardHandler).View("page").Parent(parent), "text/html")
+	is.Equal(w.Code, http.StatusInternalServerError)
+	is.True(strings.Contains(w.Body.String(), "parent has no view"))
 }
 
 func TestMissingHTMLViewJSON(t *testing.T) {
@@ -374,6 +381,8 @@ func TestNegotiation(t *testing.T) {
 func TestValidationJSON(t *testing.T) {
 	is := is.New(t)
 	k := koi.New()
+	var logs bytes.Buffer
+	k.Log = slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	type input struct {
 		Name string `json:"name" validate:"required"`
 	}
@@ -389,11 +398,20 @@ func TestValidationJSON(t *testing.T) {
 	route.ServeHTTP(w, req)
 	is.Equal(w.Code, 422)
 	is.True(!called)
+	is.True(strings.Contains(logs.String(), `"status":422`))
 	var body struct {
 		Fields map[string][]string `json:"fields"`
 	}
 	is.NoErr(json.Unmarshal(w.Body.Bytes(), &body))
 	is.Equal(body.Fields["name"], []string{"is required"})
+	// Field errors from a controller are logged with the status that was sent.
+	logs.Reset()
+	route = k.Wrap(func(req *koi.Request[koi.Empty]) (res koi.Response[board]) {
+		return res.Error(koi.Invalid{"name": {"is taken"}})
+	})
+	w = serve(t, route, "application/json")
+	is.Equal(w.Code, 422)
+	is.True(strings.Contains(logs.String(), `"status":422`))
 }
 
 func TestAcceptsMediaTypes(t *testing.T) {
@@ -618,4 +636,257 @@ func TestQueryArrays(t *testing.T) {
 	route.ServeHTTP(w, req)
 	is.Equal(w.Code, http.StatusOK)
 	is.Equal(w.Body.String(), `{"types":["session.status_idle","session.error"],"limit":1,"order":"desc"}`+"\n")
+}
+
+// stackRenderer writes the name and props of each view it's given, in order.
+type stackRenderer struct {
+	calls int
+}
+
+func (r *stackRenderer) Render(ctx context.Context, w io.Writer, views ...koi.View) error {
+	r.calls++
+	for _, view := range views {
+		fmt.Fprintf(w, "%s:%v\n", view.Name, view.Props)
+	}
+	return nil
+}
+
+type navInput struct {
+	Tab string `form:"tab"`
+}
+
+type nav struct {
+	Tab string
+}
+
+func navHandler(req *koi.Request[navInput]) (res koi.Response[nav]) {
+	return res.Body(nav{Tab: req.Input.Tab})
+}
+
+func emptyHandler(req *koi.Request[koi.Empty]) (res koi.Response[koi.Empty]) {
+	return res
+}
+
+func getHtml(t testing.TB, h http.Handler, target string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, target, nil)
+	req.Header.Set("Accept", "text/html")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	return w
+}
+
+func TestParentTemplate(t *testing.T) {
+	is := is.New(t)
+	k := koi.New()
+	// Each parent's slot holds everything inside it, at any depth.
+	root := k.Wrap(emptyHandler).View(writeView(t, `<html>{{slot}}</html>`))
+	shell := k.Wrap(navHandler).View(writeView(t, `<nav>{{.Tab}}</nav><main>{{slot}}</main>`)).Parent(root)
+	section := k.Wrap(emptyHandler).View(writeView(t, `<section>{{slot}}</section>`)).Parent(shell)
+	page := k.Wrap(boardHandler).View(writeView(t, `<h1>{{.ID}}</h1>`)).Parent(section)
+	w := getHtml(t, page, "/boards?tab=usage")
+	is.Equal(w.Code, 200)
+	is.Equal(w.Body.String(), "<html><nav>usage</nav><main><section><h1>42</h1></section></main></html>")
+}
+
+func TestParentStack(t *testing.T) {
+	is := is.New(t)
+	k := koi.New()
+	k.Renderer = &stackRenderer{}
+	layout := k.Wrap(emptyHandler).View("layout")
+	shell := k.Wrap(navHandler).View("shell").Parent(layout)
+	page := k.Wrap(boardHandler).View("page").Parent(shell)
+	w := getHtml(t, page, "/boards?tab=billing")
+	is.Equal(w.Code, 200)
+	is.Equal(w.Body.String(), "layout:{}\nshell:{billing}\npage:{42}\n")
+	// Pages share a stack by sharing the parent.
+	other := k.Wrap(boardHandler).View("other").Parent(shell)
+	w = getHtml(t, other, "/boards?tab=usage")
+	is.Equal(w.Body.String(), "layout:{}\nshell:{usage}\nother:{42}\n")
+	// Response.Render picks the view, for a page and for a parent.
+	compact := k.Wrap(func(req *koi.Request[koi.Empty]) (res koi.Response[nav]) {
+		return res.Render("compact", nav{Tab: "billing"})
+	}).View("shell")
+	edit := k.Wrap(func(req *koi.Request[koi.Empty]) (res koi.Response[board]) {
+		return res.Render("edit", board{ID: "42"})
+	}).View("page").Parent(compact)
+	w = getHtml(t, edit, "/boards")
+	is.Equal(w.Body.String(), "compact:{billing}\nedit:{42}\n")
+}
+
+func TestParentJSON(t *testing.T) {
+	is := is.New(t)
+	k := koi.New()
+	called := false
+	shell := k.Wrap(func(req *koi.Request[navInput]) (res koi.Response[nav]) {
+		called = true
+		return navHandler(req)
+	}).View("shell")
+	page := k.Wrap(boardHandler).View("page").Parent(shell)
+	w := serve(t, page, "application/json")
+	is.Equal(w.Body.String(), "{\"id\":\"42\"}\n")
+	is.True(!called)
+}
+
+func TestParentPanic(t *testing.T) {
+	is := is.New(t)
+	k := koi.New()
+	var logs bytes.Buffer
+	k.Log = slog.New(slog.NewJSONHandler(&logs, nil))
+	renderer := &stackRenderer{}
+	k.Renderer = renderer
+	shell := k.Wrap(func(req *koi.Request[koi.Empty]) (res koi.Response[nav]) {
+		panic("boom")
+	}).View("shell")
+	w := getHtml(t, k.Wrap(boardHandler).View("page").Parent(shell), "/boards")
+	is.Equal(w.Code, 500)
+	is.Equal(renderer.calls, 0)
+	is.True(!strings.Contains(w.Body.String(), "boom"))
+	is.True(strings.Contains(logs.String(), "koi: parent panicked: boom"))
+}
+
+func TestParentConcurrent(t *testing.T) {
+	is := is.New(t)
+	k := koi.New()
+	k.Renderer = &stackRenderer{}
+	pageStarted, shellStarted := make(chan struct{}), make(chan struct{})
+	// Each handler waits for the other to start, which only works if they overlap.
+	shell := k.Wrap(func(req *koi.Request[koi.Empty]) (res koi.Response[nav]) {
+		close(shellStarted)
+		select {
+		case <-pageStarted:
+			return res.Body(nav{Tab: "shell"})
+		case <-time.After(5 * time.Second):
+			return res.Errorf("page never started")
+		}
+	}).View("shell")
+	page := k.Wrap(func(req *koi.Request[koi.Empty]) (res koi.Response[board]) {
+		close(pageStarted)
+		select {
+		case <-shellStarted:
+			return res.Body(board{ID: "42"})
+		case <-time.After(5 * time.Second):
+			return res.Errorf("shell never started")
+		}
+	}).View("page").Parent(shell)
+	w := getHtml(t, page, "/boards")
+	is.Equal(w.Code, 200)
+	is.Equal(w.Body.String(), "shell:{shell}\npage:{42}\n")
+}
+
+func TestParentBody(t *testing.T) {
+	is := is.New(t)
+	k := koi.New()
+	k.Renderer = &stackRenderer{}
+	// Both bind the same input, but only the page reads the body.
+	shell := k.Wrap(func(req *koi.Request[nameInput]) (res koi.Response[nav]) {
+		return res.Body(nav{Tab: req.Input.Name})
+	}).View("shell")
+	page := k.Wrap(func(req *koi.Request[nameInput]) (res koi.Response[board]) {
+		return res.Body(board{ID: req.Input.Name})
+	}).View("page").Parent(shell)
+	req := httptest.NewRequest(http.MethodPost, "/boards", strings.NewReader(`{"name":"matt"}`))
+	req.Header.Set("Accept", "text/html")
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	page.ServeHTTP(w, req)
+	is.Equal(w.Code, 200)
+	is.Equal(w.Body.String(), "shell:{}\npage:{matt}\n")
+}
+
+func TestParentCanceled(t *testing.T) {
+	is := is.New(t)
+	k := koi.New()
+	renderer := &stackRenderer{}
+	k.Renderer = renderer
+	canceled := false
+	shell := k.Wrap(func(req *koi.Request[koi.Empty]) (res koi.Response[nav]) {
+		select {
+		case <-req.Context().Done():
+			canceled = true
+		case <-time.After(5 * time.Second):
+		}
+		return res
+	}).View("shell")
+	redirect := k.Wrap(func(req *koi.Request[koi.Empty]) (res koi.Response[board]) {
+		return res.Redirect("/login")
+	}).View("page").Parent(shell)
+	w := getHtml(t, redirect, "/boards")
+	is.Equal(w.Code, 303)
+	is.True(canceled)
+	canceled = false
+	failure := k.Wrap(func(req *koi.Request[koi.Empty]) (res koi.Response[board]) {
+		return res.Status(404).Errorf("missing board")
+	}).View("page").Parent(shell)
+	w = getHtml(t, failure, "/boards")
+	is.Equal(w.Code, 404)
+	is.True(canceled)
+	is.Equal(renderer.calls, 0)
+}
+
+func TestParentFailures(t *testing.T) {
+	is := is.New(t)
+	k := koi.New()
+	renderer := &stackRenderer{}
+	k.Renderer = renderer
+	signedOut := k.Wrap(func(req *koi.Request[koi.Empty]) (res koi.Response[nav]) {
+		return res.Status(401).Errorf("signed out")
+	}).View("layout")
+	w := getHtml(t, k.Wrap(boardHandler).View("page").Parent(signedOut), "/boards")
+	is.Equal(w.Code, 401)
+	is.True(strings.Contains(w.Body.String(), "Unauthorized"))
+	login := k.Wrap(func(req *koi.Request[koi.Empty]) (res koi.Response[nav]) {
+		return res.Redirect("/login")
+	}).View("shell")
+	w = getHtml(t, k.Wrap(boardHandler).View("page").Parent(login), "/boards")
+	is.Equal(w.Code, 303)
+	is.Equal(w.Header().Get("Location"), "/login")
+	// A parent's outcome also replaces a page that has no body to render.
+	w = getHtml(t, k.Wrap(emptyHandler).View("page").Parent(login), "/boards")
+	is.Equal(w.Code, 303)
+	// Input errors are reported like the page's.
+	events := k.Wrap(func(req *koi.Request[eventQuery]) (res koi.Response[eventQuery]) {
+		return res.Body(req.Input)
+	}).View("shell")
+	w = getHtml(t, k.Wrap(boardHandler).View("page").Parent(events), "/boards?limit=many")
+	is.Equal(w.Code, 400)
+	// When several parents fail, the outermost one wins.
+	forbidden := k.Wrap(func(req *koi.Request[koi.Empty]) (res koi.Response[nav]) {
+		return res.Status(403).Errorf("forbidden")
+	}).View("shell").Parent(signedOut)
+	w = getHtml(t, k.Wrap(boardHandler).View("page").Parent(forbidden), "/boards")
+	is.Equal(w.Code, 401)
+	is.Equal(renderer.calls, 0)
+}
+
+func TestParentHeaders(t *testing.T) {
+	is := is.New(t)
+	k := koi.New()
+	k.Renderer = &stackRenderer{}
+	layout := k.Wrap(func(req *koi.Request[koi.Empty]) (res koi.Response[nav]) {
+		return res.Header("X-Layout", "1").Header("Cache-Control", "public").Header("X-Frame", "layout")
+	}).View("layout")
+	shell := k.Wrap(func(req *koi.Request[koi.Empty]) (res koi.Response[nav]) {
+		return res.Header("Vary", "Cookie").Header("Cache-Control", "private").Header("X-Frame", "shell")
+	}).View("shell").Parent(layout)
+	noStore := func(req *koi.Request[koi.Empty]) (res koi.Response[board]) {
+		return res.Header("Cache-Control", "no-store").Body(board{ID: "42"})
+	}
+	w := getHtml(t, k.Wrap(noStore).View("page").Parent(shell), "/boards")
+	is.Equal(w.Code, 200)
+	is.Equal(w.Header().Get("X-Layout"), "1")
+	is.Equal(w.Header().Values("Vary"), []string{"Accept", "Cookie"})
+	// The page wins over its parents, and an inner parent over an outer one.
+	is.Equal(w.Header().Get("Cache-Control"), "no-store")
+	is.Equal(w.Header().Get("X-Frame"), "shell")
+	// A redirect or error carries the headers of the route that returned it,
+	// and not those of the page or of the other parents.
+	login := k.Wrap(func(req *koi.Request[koi.Empty]) (res koi.Response[nav]) {
+		return res.Header("X-Frame", "login").Redirect("/login")
+	}).View("shell").Parent(layout)
+	w = getHtml(t, k.Wrap(noStore).View("page").Parent(login), "/boards")
+	is.Equal(w.Code, 303)
+	is.Equal(w.Header().Get("X-Frame"), "login")
+	is.Equal(w.Header().Get("Cache-Control"), "")
+	is.Equal(w.Header().Get("X-Layout"), "")
 }

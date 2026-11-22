@@ -2,6 +2,8 @@ package koi
 
 import (
 	"bytes"
+	"cmp"
+	"context"
 	_ "embed"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
@@ -13,7 +15,10 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"runtime/debug"
+	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/matthewmueller/koi/internal/request"
@@ -24,14 +29,26 @@ import (
 // same route; configure it before serving concurrent requests.
 type Route[Out any] struct {
 	k         *Koi
-	handle    func(http.ResponseWriter, *http.Request) (Response[Out], error)
+	handle    func(http.ResponseWriter, *http.Request) Response[Out]
 	view      string
 	errorView string
 	status    int
 	redirect  string
+	parent    parent
 }
 
 var _ http.Handler = (*Route[Empty])(nil)
+
+// parent is a route whose view wraps another route's view. The interface
+// hides the route's body type, so a route can have a parent of any type.
+type parent interface {
+	// load runs the route's handler and resolves its view.
+	load(req *http.Request) Response[any]
+	// above returns the route's own parent, or nil.
+	above() parent
+}
+
+var _ parent = (*Route[Empty])(nil)
 
 // View sets the default HTML template key. Response.Render overrides it.
 // JSON responses do not use the view.
@@ -62,6 +79,48 @@ func (r *Route[Out]) Status(code int) *Route[Out] {
 func (r *Route[Out]) Redirect(target string) *Route[Out] {
 	r.redirect = target
 	return r
+}
+
+// Parent renders this route's view inside the parent's view. For HTML
+// requests, the parent's handler runs alongside this route's handler and its
+// body becomes the props of its view. Its input is bound from the query string
+// only. If the parent fails or redirects, that replaces the page. A parent can
+// have its own parent.
+//
+// JSON requests don't run parents. Only the parent's handler and view are
+// used: its Status, Redirect and ErrorView are ignored.
+func (r *Route[Out]) Parent[P any](parent *Route[P]) *Route[Out] {
+	r.parent = parent
+	return r
+}
+
+func (r *Route[Out]) above() parent {
+	return r.parent
+}
+
+func (r *Route[Out]) load(req *http.Request) (out Response[any]) {
+	// net/http only recovers panics in the goroutine it started, so a panic
+	// here would otherwise end the process.
+	defer func() {
+		if v := recover(); v != nil {
+			out = out.Errorf("koi: parent panicked: %v\n%s", v, debug.Stack())
+		}
+	}()
+	// A parent has no body to limit, so there's no response writer to pass.
+	res := r.handle(nil, req)
+	// Like a page's body, an invalid one is a server bug. Errors and redirects
+	// take precedence, as they do for a page.
+	if res.err == nil && res.redirect == "" && res.hasBody {
+		if invalid := r.k.Validator.Validate(&res.body); invalid != nil {
+			return out.Errorf("koi: invalid response body: %v", invalid)
+		}
+	}
+	res.view = cmp.Or(res.view, r.view)
+	// A page reports its own missing view, so a parent that renders does too.
+	if res.view == "" && res.err == nil && res.redirect == "" {
+		return out.Errorf("koi: parent has no view; configure Route.View or Response.Render")
+	}
+	return Response[any]{body: res.body, outcome: res.outcome}
 }
 
 func logLevel(status int) slog.Level {
@@ -112,52 +171,52 @@ func (r *Route[Out]) serve(w http.ResponseWriter, req *http.Request) (status int
 		})
 		return http.StatusNotAcceptable, nil
 	}
-	res, err := r.handle(w, req)
 
-	if err != nil {
-		// Binding and validation happen inside the route handler wrapper.
-		page := r.k.errorResponse(toErrorStatus(err), err, "")
-		r.writeError(w, req, asHTML, page)
-		return page.Status, err
-	}
-
-	// Send headers after both successful responses and controller errors.
-	headers := w.Header()
-	for key, values := range res.header {
-		if key == "Vary" {
-			for _, value := range values {
-				headers.Add(key, value)
-			}
-		} else {
-			headers[key] = values
+	// Parents load alongside the page. JSON doesn't render them, so it skips them.
+	var loads []*Response[any]
+	var wg sync.WaitGroup
+	if asHTML && r.parent != nil {
+		ctx, cancel := context.WithCancel(req.Context())
+		defer wg.Wait() // no loader outlives ServeHTTP
+		defer cancel()  // runs first, so any early return stops the loaders
+		for p := r.parent; p != nil; p = p.above() {
+			l := new(Response[any])
+			loads = append(loads, l)
+			// Parents bind from the query string. The body belongs to the page,
+			// and a clone keeps a parent from sharing the page's headers and form.
+			sub := req.Clone(ctx)
+			sub.Body, sub.ContentLength = http.NoBody, 0
+			wg.Go(func() { *l = p.load(sub) })
 		}
 	}
 
-	if res.err != nil {
-		// Controller errors use their explicit status, or 500 by default.
-		status := res.status
-		if status == 0 {
-			status = http.StatusInternalServerError
-		}
-		r.writeError(w, req, asHTML, r.k.errorResponse(status, res.err, res.message))
+	res := r.handle(w, req)
+	// Route redirects apply to HTML only.
+	if res.redirect == "" && asHTML {
+		res.redirect = r.redirect
+	}
+	if status := r.exit(w, req, asHTML, res.outcome); status != 0 {
 		return status, res.err
 	}
 
-	// Resolve redirects only after ruling out errors. Route redirects apply to HTML;
-	// an explicit response redirect without a body also applies to JSON.
-	status = res.status
-	target := res.redirect
-	if target == "" && asHTML {
-		target = r.redirect
+	// A parent's error or redirect replaces the page. The chain was walked
+	// upward, so read it backward to check the outermost parent first.
+	wg.Wait()
+	for _, l := range slices.Backward(loads) {
+		if status := r.exit(w, req, asHTML, l.outcome); status != 0 {
+			return status, l.err
+		}
 	}
-	if target != "" && (asHTML || !res.hasBody) {
-		target = resolveRedirect(req, target)
-		status = http.StatusSeeOther
-		http.Redirect(w, req, target, status)
-		return status, nil
+	// The page's headers go on last, so they win over its parents'.
+	var views []View
+	for _, l := range slices.Backward(loads) {
+		mergeHeader(w.Header(), l.header)
+		views = append(views, View{Name: l.view, Props: l.body})
 	}
+	mergeHeader(w.Header(), res.header)
 
 	// Success status precedence: response override, route default, then body presence.
+	status = res.status
 	if status == 0 {
 		status = r.status
 	}
@@ -195,14 +254,13 @@ func (r *Route[Out]) serve(w http.ResponseWriter, req *http.Request) (status int
 	if asHTML && view == "" && quality(req.Header.Get("Accept"), mediaType("json")) > 0 {
 		asHTML = false
 	}
-	if asHTML {
-		if view == "" {
-			err = errors.New("HTML response has no view; configure Route.View, Response.Render, or Route.Redirect")
-		} else {
-			err = r.k.Renderer.Render(req.Context(), &buf, view, res.body)
-		}
-	} else {
+	switch {
+	case !asHTML:
 		err = r.encodeJson(&buf, res.body)
+	case view == "":
+		err = errors.New("HTML response has no view; configure Route.View, Response.Render, or Route.Redirect")
+	default:
+		err = r.k.Renderer.Render(req.Context(), &buf, append(views, View{Name: view, Props: res.body})...)
 	}
 	if err != nil {
 		status = http.StatusInternalServerError
@@ -216,6 +274,41 @@ func (r *Route[Out]) serve(w http.ResponseWriter, req *http.Request) (status int
 		w.Header().Set("Content-Type", "application/json")
 	}
 	return status, writeBody(w, req, status, buf.Bytes())
+}
+
+// exit writes the outcomes that end a request without rendering a body: an
+// error or a redirect. A page and its parents share it. The response carries
+// the headers of that outcome alone. A zero status means neither applied.
+func (r *Route[Out]) exit(w http.ResponseWriter, req *http.Request, asHTML bool, res outcome) int {
+	if res.err != nil {
+		mergeHeader(w.Header(), res.header)
+		// Errors use their explicit status, or 500 by default. Field errors
+		// become a 422, so return the status that was written.
+		page := r.k.errorResponse(cmp.Or(res.status, http.StatusInternalServerError), res.err, res.message)
+		r.writeError(w, req, asHTML, page)
+		return page.Status
+	}
+	// Redirects come after errors. One without a body also applies to JSON.
+	if res.redirect != "" && (asHTML || !res.hasBody) {
+		mergeHeader(w.Header(), res.header)
+		http.Redirect(w, req, resolveRedirect(req, res.redirect), http.StatusSeeOther)
+		return http.StatusSeeOther
+	}
+	return 0
+}
+
+// mergeHeader copies src into dst. Vary values are appended instead, so they
+// add to "Vary: Accept".
+func mergeHeader(dst, src http.Header) {
+	for key, values := range src {
+		if key == "Vary" {
+			for _, value := range values {
+				dst.Add(key, value)
+			}
+		} else {
+			dst[key] = values
+		}
+	}
 }
 
 func resolveRedirect(req *http.Request, target string) string {
@@ -310,7 +403,7 @@ func (r *Route[Out]) writeError(w http.ResponseWriter, req *http.Request, asHTML
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		// Buffer custom views so a failed render can fall back without leaking output.
 		if r.errorView != "" {
-			if err := r.k.Renderer.Render(req.Context(), &body, r.errorView, resErr); err == nil {
+			if err := r.k.Renderer.Render(req.Context(), &body, View{Name: r.errorView, Props: resErr}); err == nil {
 				writeBody(w, req, resErr.Status, body.Bytes())
 				return
 			}
