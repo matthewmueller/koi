@@ -1,3 +1,20 @@
+# 0.3.0 / 2026-11-22
+
+- add: `Route.Parent(route)` renders a route's view inside another route's view. For HTML requests, the parent's handler loads the props for its view while the page's handler runs:
+  ```go
+  layout := k.Wrap(loadNav).View("layout.html")
+  router.Handle("GET /hello", k.Wrap(greet).View("hello.html").Parent(layout))
+  ```
+- add: the default renderer gives a parent's template a `{{slot}}` function that returns the HTML inside it
+- fix: field errors returned by a controller, like `res.Error(koi.Invalid{…})`, are logged with the 422 that was sent instead of 500
+- **BREAKING:** `Renderer.Render` takes a stack of views, outermost first and ending with the page, instead of one name and its data:
+  ```go
+  // before
+  Render(ctx context.Context, w io.Writer, name string, data any) error
+  // after
+  Render(ctx context.Context, w io.Writer, views ...koi.View) error
+  ```
+
 # 0.2.0 / 2026-10-25
 
 - add: decode bracket keys like `types[]=a&types[]=b` and `created_at[gte]=…` in queries and form bodies, as sent by the Anthropic SDKs, Rails and jQuery
