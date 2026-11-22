@@ -134,12 +134,21 @@ func (r *Route[Out]) serve(w http.ResponseWriter, req *http.Request) (status int
 	}
 
 	if res.err != nil {
-		// Controller errors use their explicit status, or 500 by default.
-		status := res.status
+		// Controller errors use their explicit status, then a wrapped
+		// StatusError's, or 500 by default. Message follows the same order.
+		status, message := res.status, res.message
+		if serr, ok := errors.AsType[*StatusError](res.err); ok {
+			if status == 0 {
+				status = serr.Status
+			}
+			if message == "" {
+				message = serr.Message
+			}
+		}
 		if status == 0 {
 			status = http.StatusInternalServerError
 		}
-		r.writeError(w, req, asHTML, r.k.errorResponse(status, res.err, res.message))
+		r.writeError(w, req, asHTML, r.k.errorResponse(status, res.err, message))
 		return status, res.err
 	}
 

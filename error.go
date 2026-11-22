@@ -27,6 +27,57 @@ func (r *ResponseError) StatusText() string {
 	return http.StatusText(r.Status)
 }
 
+// StatusError wraps Err with a status and a client-facing message. Pass it to
+// Response.Error, directly or wrapped, to choose the response status and
+// message while keeping Err for logs and debug output.
+type StatusError struct {
+	Status  int
+	Message string
+	Err     error
+}
+
+var _ error = (*StatusError)(nil)
+
+// Error returns the wrapped error's text, falling back to the message.
+func (e *StatusError) Error() string {
+	if e.Err != nil {
+		return e.Err.Error()
+	}
+	if e.Message != "" {
+		return e.Message
+	}
+	return http.StatusText(e.Status)
+}
+
+func (e *StatusError) Unwrap() error {
+	return e.Err
+}
+
+// BadRequest wraps err as a 400 with a client-facing message.
+func BadRequest(err error, message string) error {
+	return &StatusError{http.StatusBadRequest, message, err}
+}
+
+// Unauthorized wraps err as a 401 with a client-facing message.
+func Unauthorized(err error, message string) error {
+	return &StatusError{http.StatusUnauthorized, message, err}
+}
+
+// Forbidden wraps err as a 403 with a client-facing message.
+func Forbidden(err error, message string) error {
+	return &StatusError{http.StatusForbidden, message, err}
+}
+
+// NotFound wraps err as a 404 with a client-facing message.
+func NotFound(err error, message string) error {
+	return &StatusError{http.StatusNotFound, message, err}
+}
+
+// Conflict wraps err as a 409 with a client-facing message.
+func Conflict(err error, message string) error {
+	return &StatusError{http.StatusConflict, message, err}
+}
+
 var _ error = (Invalid)(nil)
 var _ error = (*Invalid)(nil)
 

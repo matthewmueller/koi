@@ -1,3 +1,7 @@
+# Unreleased
+
+- add: `koi.BadRequest(err, "user error")`, `Unauthorized`, `Forbidden`, `NotFound`, and `Conflict` wrap an error with a status and public message for `res.Error`; the wrapped error is still logged
+
 # 0.2.0 / 2026-10-25
 
 - add: decode bracket keys like `types[]=a&types[]=b` and `created_at[gte]=…` in queries and form bodies, as sent by the Anthropic SDKs, Rails and jQuery

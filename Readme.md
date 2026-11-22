@@ -119,6 +119,18 @@ return res.Status(404).Errorf("board %s was not found", id)
 Error details are hidden in production. Use `res.Message("Board not found")` for
 safe public text, or `k.Debug = true` to expose underlying errors during development.
 
+Or wrap the error itself with a status and safe public text, which also works in
+code that returns errors without seeing the response. The wrapped error is still
+logged and matched by `errors.Is`:
+
+```go
+return res.Error(koi.BadRequest(err, "user error"))
+```
+
+`koi.BadRequest`, `Unauthorized`, `Forbidden`, `NotFound`, and `Conflict` return a
+`*koi.StatusError`; build one directly for other statuses. It applies even when
+wrapped again with `%w`. `res.Status` and `res.Message` take precedence over it.
+
 Configure `Route.ErrorView("error.html")` for a custom HTML error page. Its template
 receives `Status`, `Message`, and `Fields`; otherwise Koi supplies a basic page.
 
@@ -199,6 +211,12 @@ type ResponseError struct {
 	Status  int
 	Message string
 	Fields  Invalid
+}
+
+type StatusError struct {
+	Status  int
+	Message string
+	Err     error
 }
 ```
 
