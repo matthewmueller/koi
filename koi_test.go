@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"mime/multipart"
@@ -250,6 +251,54 @@ func TestMessageFormattingAndStatus(t *testing.T) {
 	w = serve(t, route, "text/html")
 	is.Equal(w.Code, http.StatusConflict)
 	is.True(strings.Contains(w.Body.String(), "board 42 already exists"))
+}
+
+func TestStatusError(t *testing.T) {
+	is := is.New(t)
+	k := koi.New()
+	var logs bytes.Buffer
+	k.Log = slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	underlying := errors.New("strconv: parsing \"abc\": invalid syntax")
+	route := k.Wrap(func(req *koi.Request[koi.Empty]) (res koi.Response[board]) {
+		return res.Error(koi.BadRequest(underlying, "user error"))
+	})
+	w := serve(t, route, "application/json")
+	is.Equal(w.Code, http.StatusBadRequest)
+	is.Equal(w.Body.String(), "{\"error\":\"user error\"}\n")
+	var record map[string]any
+	is.NoErr(json.NewDecoder(&logs).Decode(&record))
+	is.Equal(record["status"], float64(400))
+	is.Equal(record["error"], underlying.Error())
+	w = serve(t, route, "text/html")
+	is.Equal(w.Code, http.StatusBadRequest)
+	is.True(strings.Contains(w.Body.String(), "user error"))
+	is.True(!strings.Contains(w.Body.String(), "strconv"))
+
+	// Wrapped further, the status and message still apply and errors.Is sees through.
+	err := fmt.Errorf("load board: %w", koi.NotFound(underlying, "Board not found"))
+	is.True(errors.Is(err, underlying))
+	route = k.Wrap(func(req *koi.Request[koi.Empty]) (res koi.Response[board]) {
+		return res.Error(err)
+	})
+	w = serve(t, route, "application/json")
+	is.Equal(w.Code, http.StatusNotFound)
+	is.Equal(w.Body.String(), "{\"error\":\"Board not found\"}\n")
+
+	// Explicit Status and Message take precedence.
+	route = k.Wrap(func(req *koi.Request[koi.Empty]) (res koi.Response[board]) {
+		return res.Error(koi.Conflict(underlying, "already exists")).Status(http.StatusGone).Message("gone")
+	})
+	w = serve(t, route, "application/json")
+	is.Equal(w.Code, http.StatusGone)
+	is.Equal(w.Body.String(), "{\"error\":\"gone\"}\n")
+
+	// A nil error still fails with the status and message.
+	route = k.Wrap(func(req *koi.Request[koi.Empty]) (res koi.Response[board]) {
+		return res.Error(koi.Forbidden(nil, "not your board"))
+	})
+	w = serve(t, route, "application/json")
+	is.Equal(w.Code, http.StatusForbidden)
+	is.Equal(w.Body.String(), "{\"error\":\"not your board\"}\n")
 }
 
 func TestErrorView(t *testing.T) {
