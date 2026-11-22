@@ -1,3 +1,7 @@
+# 0.3.1 / 2026-11-22
+
+- add a license
+
 # 0.3.0 / 2026-11-22
 
 - add: `Route.Parent(route)` renders a route's view inside another route's view. For HTML requests, the parent's handler loads the props for its view while the page's handler runs:
