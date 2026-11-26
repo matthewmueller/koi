@@ -1,3 +1,31 @@
+# 0.4.0 / 2026-11-26
+
+- add: bind the standard mux's path values to the input by name, so `router.Handle("GET /boards/{id}", k.Wrap(show))` fills `Input.ID`. The path wins over a query value of the same name
+- **BREAKING:** with the standard mux, a body field named like a path wildcard returns 400, like a body field named like a query key already does. `PUT /boards/{id}` with `{"id": "abc"}` used to ignore the path and now returns `duplicate request field "id"`
+- **BREAKING:** JSON bodies with fields the input doesn't declare, like a misspelled `{"netwrking": {}}`, return 422 naming the field instead of being ignored. Set `k.AllowUnknownFields = true` for the old behavior. Query strings and forms still ignore unknown keys
+- **BREAKING:** a JSON value of the wrong type returns 422 with a field error instead of 400 `Bad Request`:
+  ```sh
+  # {"networking": {"type": 5}}
+  # before: 400 {"error":"Bad Request"}
+  # after:  422 {"error":"networking.type can't be a number","fields":{"networking.type":["can't be a number"]}}
+  ```
+- **BREAKING:** malformed JSON, a bad URL escape, a malformed bracket key, a duplicate field and an unsupported media type keep their 400 or 415 status, but the response says what's wrong, like `invalid URL escape "%zz"`, instead of the status text. Other input errors still show only the status text, because they can describe the server
+- **BREAKING:** error summaries show field names as they were sent instead of capitalizing them: `name is required`, not `Name is required`
+- **BREAKING:** validation errors name fields the way decoding does. List items are `tags.1` instead of `tags[1]`, and an embedded struct's fields are named as its parent's, so `networking.type` instead of `Environment.networking.type`
+- **BREAKING:** JSON bodies are decoded with `encoding/json/v2`. A body with duplicate fields, invalid UTF-8, or the wrong number of elements for a fixed-size array returns 400. Field names still match in any case, and now also ignore dashes and underscores, so `allowed-hosts` matches `allowed_hosts`
+- **BREAKING:** a `time.Duration` field in a JSON body returns 500 instead of decoding from nanoseconds, because `encoding/json/v2` has no format for one. Responses have failed the same way since 0.1.5. Use a type that marshals itself:
+  ```go
+  type Wait time.Duration
+
+  func (w Wait) MarshalText() ([]byte, error) { return []byte(time.Duration(w).String()), nil }
+
+  func (w *Wait) UnmarshalText(text []byte) error {
+  	d, err := time.ParseDuration(string(text))
+  	*w = Wait(d)
+  	return err
+  }
+  ```
+
 # 0.3.1 / 2026-11-22
 
 - add a license
