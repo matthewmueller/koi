@@ -58,6 +58,7 @@ func (v *inputValidator) validateTags(value reflect.Value) Invalid {
 		if value.Type().Name() != "" {
 			_, name, _ = strings.Cut(name, ".")
 		}
+		name = decodedName.Replace(name)
 		result.Add(name, validationMessage(field.Tag()))
 	}
 	return result
@@ -75,6 +76,16 @@ func validateCustom(value reflect.Value) Invalid {
 	return nil
 }
 
+// inline stands in for the name of an embedded struct. Decoders don't use that
+// name: they read the struct's fields as its parent's. Other embedded types
+// keep their name.
+const inline = "\x00"
+
+// decodedName rewrites the validator's name for a field into the one decoding
+// uses, so a field has the same name in every error. Embedded structs are
+// left out, and list items are allowed_hosts.1 instead of allowed_hosts[1].
+var decodedName = strings.NewReplacer(inline+".", "", "."+inline, "", inline, "", "[", ".", "]", "")
+
 // fieldName resolves a field's name the same way as binding in
 // internal/request, so errors match the submitted keys: the form tag, then the
 // json tag, then the field name. Returns an empty string for ignored fields.
@@ -91,6 +102,13 @@ func fieldName(field reflect.StructField) string {
 		if name != "" {
 			return name
 		}
+	}
+	t := field.Type
+	for t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+	if field.Anonymous && t.Kind() == reflect.Struct {
+		return inline
 	}
 	return field.Name
 }

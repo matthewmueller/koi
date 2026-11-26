@@ -5,8 +5,6 @@ import (
 	"net/http"
 	"sort"
 	"strings"
-	"unicode"
-	"unicode/utf8"
 )
 
 // Invalid contains client-facing field validation failures.
@@ -50,17 +48,9 @@ func (e Invalid) Error() string {
 	}
 	messages := make([]string, 0, len(fields))
 	for _, field := range fields {
-		messages = append(messages, capitalize(field)+" "+joinMessages(e[field]))
+		messages = append(messages, field+" "+joinMessages(e[field]))
 	}
 	return strings.Join(messages, ". ")
-}
-
-func capitalize(value string) string {
-	r, size := utf8.DecodeRuneInString(value)
-	if size == 0 {
-		return value
-	}
-	return string(unicode.ToUpper(r)) + value[size:]
 }
 
 func joinMessages(messages []string) string {

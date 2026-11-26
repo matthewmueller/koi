@@ -2,6 +2,8 @@
 package koi
 
 import (
+	"encoding/json/v2"
+	"fmt"
 	"log/slog"
 	"net/http"
 
@@ -27,6 +29,12 @@ type Koi struct {
 	// Larger bodies are rejected with 413. New sets it to 10MB; zero or
 	// negative disables the limit.
 	MaxBodySize int64
+	// AllowUnknownFields ignores fields in a JSON request body that the input
+	// doesn't declare. It defaults to false, which rejects them with a 422
+	// that names the field, so a misspelled field isn't silently dropped.
+	// Query strings and forms always ignore unknown keys, since they carry
+	// values meant for others, like a CSRF token.
+	AllowUnknownFields bool
 	// Debug exposes underlying error messages in responses. It defaults to false.
 	Debug bool
 	// Log records method, path, status, duration, and underlying errors.
@@ -65,8 +73,17 @@ func (k *Koi) Wrap[In, Out any](handler Handler[In, Out]) *Route[Out] {
 		if k.MaxBodySize > 0 {
 			r.Body = http.MaxBytesReader(w, r.Body, k.MaxBodySize)
 		}
-		if err := request.Unmarshal(r, &req.Input); err != nil {
-			return res.Status(toErrorStatus(err)).Error(err)
+		if err := request.Unmarshal(r, &req.Input, json.RejectUnknownMembers(!k.AllowUnknownFields)); err != nil {
+			// A type that decodes itself can return field errors of its own.
+			if _, ok := invalidFields(err); ok {
+				return res.Error(err)
+			}
+			status, field, message := request.Describe(err)
+			if field != "" {
+				// Keep the decoder's error for the log.
+				return res.Status(status).Error(fmt.Errorf("%w: %w", Invalid{field: {message}}, err))
+			}
+			return res.Status(status).Error(err).Message("%s", message)
 		}
 		if invalid := k.Validator.Validate(&req.Input); invalid != nil {
 			return res.Status(http.StatusUnprocessableEntity).Error(invalid)

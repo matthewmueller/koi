@@ -34,7 +34,7 @@ func TestValidationPointerInput(t *testing.T) {
 	route.ServeHTTP(w, req)
 	is.Equal(w.Code, 422)
 	is.True(!called)
-	is.Equal(w.Body.String(), "{\"error\":\"Email is required\",\"fields\":{\"email\":[\"is required\"]}}\n")
+	is.Equal(w.Body.String(), "{\"error\":\"email is required\",\"fields\":{\"email\":[\"is required\"]}}\n")
 }
 
 func TestValidationFields(t *testing.T) {
@@ -58,7 +58,7 @@ func TestInvalidAdd(t *testing.T) {
 	err.Add("email", "is required")
 	err.Add("email", "must be unique")
 	is.Equal(err["email"], []string{"is required", "must be unique"})
-	is.Equal(err.Error(), "Email is required and must be unique")
+	is.Equal(err.Error(), "email is required and must be unique")
 }
 
 func TestInvalidError(t *testing.T) {
@@ -67,9 +67,42 @@ func TestInvalidError(t *testing.T) {
 		"name":  {"is required"},
 		"email": {"is required", "must be unique"},
 	}
-	is.Equal(invalid.Error(), "Email is required and must be unique. Name is required")
+	is.Equal(invalid.Error(), "email is required and must be unique. name is required")
 	invalid["email"] = append(invalid["email"], "must contain more than 3 characters")
-	is.Equal(invalid.Error(), "Email is required, must be unique, and must contain more than 3 characters. Name is required")
+	is.Equal(invalid.Error(), "email is required, must be unique, and must contain more than 3 characters. name is required")
+}
+
+type Environment struct {
+	Hosts  []string          `json:"hosts" validate:"dive,hostname"`
+	Labels map[string]string `json:"labels" validate:"dive,min=2"`
+}
+
+type Placement struct {
+	Region string `json:"region" validate:"required"`
+}
+
+type Slug string
+
+func TestValidationNames(t *testing.T) {
+	is := is.New(t)
+	type input struct {
+		Environment
+		Placement `json:"placement"`
+		Slug      `validate:"required"`
+	}
+	// Fields are named the way decoding names them: an embedded struct is
+	// left out unless it has a name of its own, and items go by index or key.
+	// Other embedded types keep their name.
+	err := koi.New().Validator.Validate(&input{
+		Hosts:  []string{"a.com", "not a host"},
+		Labels: map[string]string{"tier": "x"},
+	})
+	is.Equal(err, koi.Invalid{
+		"hosts.1":          {"is invalid"},
+		"labels.tier":      {"is invalid"},
+		"placement.region": {"is required"},
+		"Slug":             {"is required"},
+	})
 }
 
 func TestValidationAnonymous(t *testing.T) {
@@ -150,7 +183,7 @@ func TestValidatorOverride(t *testing.T) {
 	route.ServeHTTP(w, req)
 	is.Equal(w.Code, 422)
 	is.Equal(called, 1)
-	is.Equal(w.Body.String(), "{\"error\":\"Name is already taken\",\"fields\":{\"name\":[\"is already taken\"]}}\n")
+	is.Equal(w.Body.String(), "{\"error\":\"name is already taken\",\"fields\":{\"name\":[\"is already taken\"]}}\n")
 }
 
 type mergedValidation struct {

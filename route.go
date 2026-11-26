@@ -20,8 +20,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	"github.com/matthewmueller/koi/internal/request"
 )
 
 // Route serves a typed controller as an http.Handler. Create routes through
@@ -83,9 +81,9 @@ func (r *Route[Out]) Redirect(target string) *Route[Out] {
 
 // Parent renders this route's view inside the parent's view. For HTML
 // requests, the parent's handler runs alongside this route's handler and its
-// body becomes the props of its view. Its input is bound from the query string
-// only. If the parent fails or redirects, that replaces the page. A parent can
-// have its own parent.
+// body becomes the props of its view. Its input is bound from the path and the
+// query string, but not the body. If the parent fails or redirects, that
+// replaces the page. A parent can have its own parent.
 //
 // JSON requests don't run parents. Only the parent's handler and view are
 // used: its Status, Redirect and ErrorView are ignored.
@@ -182,7 +180,7 @@ func (r *Route[Out]) serve(w http.ResponseWriter, req *http.Request) (status int
 		for p := r.parent; p != nil; p = p.above() {
 			l := new(Response[any])
 			loads = append(loads, l)
-			// Parents bind from the query string. The body belongs to the page,
+			// Parents bind from the path and query string. The body belongs to the page,
 			// and a clone keeps a parent from sharing the page's headers and form.
 			sub := req.Clone(ctx)
 			sub.Body, sub.ContentLength = http.NoBody, 0
@@ -334,17 +332,6 @@ func resolveRedirect(req *http.Request, target string) string {
 		u.Fragment = parsed.Fragment
 	}
 	return u.String()
-}
-
-// toErrorStatus maps an input error to its client error status.
-func toErrorStatus(err error) int {
-	if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
-		return http.StatusRequestEntityTooLarge
-	}
-	if errors.Is(err, request.ErrUnsupportedMediaType) {
-		return http.StatusUnsupportedMediaType
-	}
-	return http.StatusBadRequest
 }
 
 func negotiate(accept string) (bool, bool) {

@@ -2,7 +2,8 @@ package request
 
 import (
 	"bytes"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -12,6 +13,7 @@ import (
 	"net/http"
 	"net/url"
 	"reflect"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -24,46 +26,117 @@ var (
 	ErrInvalidKey           = errors.New("invalid request key")
 )
 
-// Unmarshal decodes query and body values using json and form tags.
-// Routers should include path parameters in the query string.
-func Unmarshal(r *http.Request, v any) error {
+// Describe returns the response a decoding error deserves: its status, the
+// field it's about when the decoder says, and a message. The message is empty
+// unless the error is known to describe only the request, because other errors
+// can describe the server: a read timeout names its address, a failed upload
+// names a directory, and a form value of the wrong type prints the input's Go
+// type.
+func Describe(err error) (status int, field, message string) {
+	if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
+		return http.StatusRequestEntityTooLarge, "", ""
+	}
+	if errors.Is(err, ErrUnsupportedMediaType) {
+		return http.StatusUnsupportedMediaType, "", err.Error()
+	}
+	if semantic, ok := errors.AsType[*json.SemanticError](err); ok {
+		// Without a JSON kind the error isn't about a value that was sent. It's
+		// about the input's Go type, like a channel, which is the server's bug.
+		if semantic.JSONKind == 0 {
+			return http.StatusInternalServerError, "", ""
+		}
+		// The message says what was sent, which is always true. What the Go
+		// type expects isn't: a time is a struct that decodes from a string.
+		// The decoder's own text isn't used because it names Go types.
+		message = "can't be " + sent[semantic.JSONKind]
+		if errors.Is(err, json.ErrUnknownName) {
+			message = "isn't a known field"
+		} else if semantic.Err != nil {
+			// The JSON type fits, but the Go type rejected the value.
+			message = "is invalid"
+		}
+		field = strings.Join(slices.Collect(semantic.JSONPointer.Tokens()), ".")
+		// The value at the root isn't a field, so the message names it.
+		if field == "" {
+			message = "body " + message
+		}
+		return http.StatusUnprocessableEntity, field, message
+	}
+	_, syntax := errors.AsType[*jsontext.SyntacticError](err)
+	_, escape := errors.AsType[url.EscapeError](err)
+	if syntax || escape || errors.Is(err, ErrDuplicateField) || errors.Is(err, ErrInvalidKey) {
+		message = err.Error()
+	}
+	return http.StatusBadRequest, "", message
+}
+
+// sent names the kinds of JSON value in a message.
+var sent = map[jsontext.Kind]string{
+	jsontext.KindString:      "a string",
+	jsontext.KindNumber:      "a number",
+	jsontext.KindTrue:        "a boolean",
+	jsontext.KindFalse:       "a boolean",
+	jsontext.KindBeginArray:  "a list",
+	jsontext.KindBeginObject: "an object",
+}
+
+// wildcard matches the name of a wildcard in a pattern, like id in {id},
+// {id...} or the {id:[0-9]+} that other routers accept.
+var wildcard = regexp.MustCompile(`\{([\pL\pN_]+)`)
+
+// Unmarshal decodes path, query and body values using json and form tags.
+// The options apply to JSON bodies.
+func Unmarshal(r *http.Request, v any, opts ...json.Options) error {
 	query, err := url.ParseQuery(r.URL.RawQuery)
 	if err != nil {
 		return fmt.Errorf("parse query: %w", err)
+	}
+	// The standard mux keeps path values out of the query. They replace every
+	// query key for the same field, like ID or id[], so the query can't
+	// override the path.
+	for _, match := range wildcard.FindAllStringSubmatch(r.Pattern, -1) {
+		maps.DeleteFunc(query, func(key string, _ []string) bool { return sameField(key, match[1]) })
+		query.Set(match[1], r.PathValue(match[1]))
 	}
 	if err := unmarshalValues(v, query); err != nil {
 		return fmt.Errorf("decode query: %w", err)
 	}
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
-		fields, err := unmarshalBody(r, v)
+		fields, err := unmarshalBody(r, v, opts...)
 		if err != nil {
 			return err
 		}
-		// Compare root names, so tags.0=a in the query collides with tags in
-		// the body.
-		seen := make(map[string]bool, len(fields))
-		for field := range fields {
-			seen[rootName(field)] = true
-		}
 		for _, field := range slices.Sorted(maps.Keys(query)) {
-			if seen[rootName(field)] {
-				return fmt.Errorf("%w %q", ErrDuplicateField, field)
+			for name := range fields {
+				if sameField(field, name) {
+					return fmt.Errorf("%w %q", ErrDuplicateField, field)
+				}
 			}
 		}
 	}
 	return nil
 }
 
-// rootName returns the lowercased top-level field name of a key. Decoding
-// matches names case-insensitively, so duplicates must too.
+// separators are ignored when JSON decoding matches a name to a field.
+var separators = strings.NewReplacer("_", "", "-", "")
+
+// sameField reports whether two keys can decode into the same top-level field,
+// so tags.0 collides with tags. It has to match as loosely as the decoders do,
+// or a body could set a field that the path or query already bound: in any
+// case, and ignoring the dashes and underscores that JSON decoding ignores.
+func sameField(a, b string) bool {
+	return strings.EqualFold(separators.Replace(rootName(a)), separators.Replace(rootName(b)))
+}
+
+// rootName returns the top-level field name of a key.
 func rootName(key string) string {
 	if i := strings.IndexAny(key, ".["); i >= 0 {
 		key = key[:i]
 	}
-	return strings.ToLower(key)
+	return key
 }
 
-func unmarshalBody(r *http.Request, v any) (url.Values, error) {
+func unmarshalBody(r *http.Request, v any, opts ...json.Options) (url.Values, error) {
 	if r.ContentLength == 0 {
 		return nil, nil
 	}
@@ -77,14 +150,14 @@ func unmarshalBody(r *http.Request, v any) (url.Values, error) {
 	}
 	switch mediaType {
 	case "application/json":
-		return unmarshalJSON(r.Body, v)
+		return unmarshalJSON(r.Body, v, opts...)
 	case "application/x-www-form-urlencoded":
 		return unmarshalForm(r, v)
 	case "multipart/form-data":
 		return unmarshalMultipart(r, v)
 	}
 	if strings.HasSuffix(mediaType, "+json") {
-		return unmarshalJSON(r.Body, v)
+		return unmarshalJSON(r.Body, v, opts...)
 	}
 	return nil, fmt.Errorf("%w %q", ErrUnsupportedMediaType, mediaType)
 }
@@ -291,26 +364,23 @@ func fieldName(field reflect.StructField) string {
 	return field.Name
 }
 
-func unmarshalJSON(body io.Reader, v any) (url.Values, error) {
+func unmarshalJSON(body io.Reader, v any, opts ...json.Options) (url.Values, error) {
 	payload, err := io.ReadAll(body)
 	if err != nil {
 		return nil, err
 	}
-	if len(payload) == 0 {
+	// A null body is no body. Decoding it would clear what the path and query
+	// bound.
+	if len(payload) == 0 || string(bytes.TrimSpace(payload)) == "null" {
 		return nil, nil
 	}
-	dec := json.NewDecoder(bytes.NewReader(payload))
-	if err := dec.Decode(v); err != nil {
+	// Names match in any case, like query and form keys do. JSON also ignores
+	// dashes and underscores.
+	if err := json.Unmarshal(payload, v, json.MatchCaseInsensitiveNames(true), json.JoinOptions(opts...)); err != nil {
 		return nil, err
 	}
-	var extra any
-	if err := dec.Decode(&extra); err != io.EOF {
-		if err == nil {
-			return nil, errors.New("request body must contain a single JSON value")
-		}
-		return nil, err
-	}
-	var fields map[string]json.RawMessage
+	// Only an object has fields that can collide with the query.
+	var fields map[string]jsontext.Value
 	if err := json.Unmarshal(payload, &fields); err != nil {
 		return nil, nil
 	}

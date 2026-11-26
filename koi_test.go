@@ -3,7 +3,8 @@ package koi_test
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -15,6 +16,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/iotest"
 	"time"
 
 	"github.com/matryer/is"
@@ -201,7 +203,7 @@ func TestErrorPrivacyAndLogging(t *testing.T) {
 	is.Equal(w.Body.String(), "{\"error\":\"Internal Server Error\"}\n")
 	is.True(!strings.Contains(serve(t, route, "text/html").Body.String(), "secret"))
 	var record map[string]any
-	is.NoErr(json.NewDecoder(&logs).Decode(&record))
+	is.NoErr(json.UnmarshalDecode(jsontext.NewDecoder(&logs), &record))
 	is.Equal(record["level"], "ERROR")
 	is.Equal(record["status"], float64(500))
 	is.Equal(record["error"], "postgres: secret password")
@@ -228,7 +230,7 @@ func TestErrorf(t *testing.T) {
 	is.Equal(w.Code, 503)
 	is.Equal(w.Body.String(), "{\"error\":\"Service Unavailable\"}\n")
 	var record map[string]any
-	is.NoErr(json.NewDecoder(&logs).Decode(&record))
+	is.NoErr(json.UnmarshalDecode(jsontext.NewDecoder(&logs), &record))
 	is.Equal(record["error"], "load board 42: database unavailable")
 	k.Debug = true
 	w = serve(t, route, "application/json")
@@ -278,7 +280,7 @@ func TestErrorView(t *testing.T) {
 	w = httptest.NewRecorder()
 	validationRoute.ServeHTTP(w, req)
 	is.Equal(w.Code, http.StatusUnprocessableEntity)
-	is.Equal(w.Body.String(), "<h1>Name is required</h1><p>[is required]</p>")
+	is.Equal(w.Body.String(), "<h1>name is required</h1><p>[is required]</p>")
 }
 
 func TestErrorViewFallback(t *testing.T) {
@@ -456,13 +458,13 @@ func TestPointerInputValidation(t *testing.T) {
 	route.ServeHTTP(w, req)
 	is.Equal(w.Code, 422)
 	is.True(!called)
-	is.Equal(w.Body.String(), "{\"error\":\"Name is required\",\"fields\":{\"name\":[\"is required\"]}}\n")
+	is.Equal(w.Body.String(), "{\"error\":\"name is required\",\"fields\":{\"name\":[\"is required\"]}}\n")
 	k.Debug = true
 	req = httptest.NewRequest("POST", "/boards", strings.NewReader(`{"name":"test"}`))
 	req.Header.Set("Content-Type", "application/json")
 	w = httptest.NewRecorder()
 	route.ServeHTTP(w, req)
-	is.Equal(w.Body.String(), "{\n\t\"error\": \"Name is required\",\n\t\"fields\": {\n\t\t\"name\": [\n\t\t\t\"is required\"\n\t\t]\n\t}\n}\n")
+	is.Equal(w.Body.String(), "{\n\t\"error\": \"name is required\",\n\t\"fields\": {\n\t\t\"name\": [\n\t\t\t\"is required\"\n\t\t]\n\t}\n}\n")
 }
 
 func TestHead(t *testing.T) {
@@ -556,7 +558,7 @@ func TestUnsupportedMediaTypeStatus(t *testing.T) {
 	is := is.New(t)
 	w := post(t, koi.New().Wrap(nameHandler), "text/plain", "matt")
 	is.Equal(w.Code, http.StatusUnsupportedMediaType)
-	is.Equal(w.Body.String(), "{\"error\":\"Unsupported Media Type\"}\n")
+	is.Equal(w.Body.String(), "{\"error\":\"unsupported media type \\\"text/plain\\\"\"}\n")
 }
 
 type validatedBoard struct {
@@ -584,8 +586,8 @@ func TestResponseValidation(t *testing.T) {
 	is.Equal(w.Code, 500)
 	is.Equal(w.Body.String(), "{\"error\":\"Internal Server Error\"}\n")
 	var record map[string]any
-	is.NoErr(json.NewDecoder(&logs).Decode(&record))
-	is.Equal(record["error"], "koi: invalid response body: Id is required")
+	is.NoErr(json.UnmarshalDecode(jsontext.NewDecoder(&logs), &record))
+	is.Equal(record["error"], "koi: invalid response body: id is required")
 	// HTML responses are validated before rendering.
 	w = serve(t, route, "text/html")
 	is.Equal(w.Code, 500)
@@ -595,7 +597,7 @@ func TestResponseValidation(t *testing.T) {
 	k.Debug = true
 	w = serve(t, route, "application/json")
 	is.Equal(w.Code, 500)
-	is.True(strings.Contains(w.Body.String(), "koi: invalid response body: Id is reserved"))
+	is.True(strings.Contains(w.Body.String(), "koi: invalid response body: id is reserved"))
 	// Valid bodies are sent.
 	id = "42"
 	w = serve(t, route, "application/json")
@@ -889,4 +891,238 @@ func TestParentHeaders(t *testing.T) {
 	is.Equal(w.Header().Get("X-Frame"), "login")
 	is.Equal(w.Header().Get("Cache-Control"), "")
 	is.Equal(w.Header().Get("X-Layout"), "")
+}
+
+type sandboxInput struct {
+	ID         string `json:"id"`
+	Limit      int    `json:"limit"`
+	Networking struct {
+		Type         string   `json:"type"`
+		AllowedHosts []string `json:"allowed_hosts"`
+	} `json:"networking"`
+}
+
+func sandboxHandler(req *koi.Request[sandboxInput]) (res koi.Response[sandboxInput]) {
+	return res.Body(req.Input)
+}
+
+func TestInputErrors(t *testing.T) {
+	is := is.New(t)
+	route := koi.New().Wrap(sandboxHandler)
+	// A value of the wrong type is reported like a validation failure, which
+	// says what was sent.
+	w := post(t, route, "application/json", `{"networking":{"type":5}}`)
+	is.Equal(w.Code, 422)
+	is.Equal(w.Body.String(), `{"error":"networking.type can't be a number","fields":{"networking.type":["can't be a number"]}}`+"\n")
+	w = post(t, route, "application/json", `{"networking":{"allowed_hosts":["a",{}]}}`)
+	is.Equal(w.Body.String(), `{"error":"networking.allowed_hosts.1 can't be an object","fields":{"networking.allowed_hosts.1":["can't be an object"]}}`+"\n")
+	w = post(t, route, "application/json", `{"limit":"many","networking":[]}`)
+	is.Equal(w.Body.String(), `{"error":"limit can't be a string","fields":{"limit":["can't be a string"]}}`+"\n")
+	w = post(t, route, "application/json", `{"networking":true}`)
+	is.Equal(w.Body.String(), `{"error":"networking can't be a boolean","fields":{"networking":["can't be a boolean"]}}`+"\n")
+	// The value at the root isn't a field.
+	w = post(t, route, "application/json", `[1]`)
+	is.Equal(w.Code, 422)
+	is.Equal(w.Body.String(), `{"error":"body can't be a list"}`+"\n")
+	// The JSON type fits, but the value doesn't.
+	w = post(t, route, "application/json", `{"limit":1.5}`)
+	is.Equal(w.Body.String(), `{"error":"limit is invalid","fields":{"limit":["is invalid"]}}`+"\n")
+	// Other errors that only describe the request keep their status and show
+	// their own text.
+	w = post(t, route, "application/json", `{"id":"a",}`)
+	is.Equal(w.Code, 400)
+	is.Equal(w.Body.String(), `{"error":"jsontext: invalid character ',' at start of value after offset 9"}`+"\n")
+	w = post(t, route, "application/json", `{"id":"a","id":"b"}`)
+	is.Equal(w.Body.String(), `{"error":"jsontext: duplicate object member name \"id\""}`+"\n")
+	w = post(t, route, "application/x-www-form-urlencoded", `id=%zz`)
+	is.Equal(w.Body.String(), `{"error":"invalid URL escape \"%zz\""}`+"\n")
+	w = post(t, route, "application/x-www-form-urlencoded", `id[=a`)
+	is.Equal(w.Body.String(), `{"error":"invalid request key \"id[\""}`+"\n")
+}
+
+// replica fails to decode with an error that describes the server.
+type replica string
+
+func (r *replica) UnmarshalText(text []byte) error {
+	return errors.New("dial tcp 10.2.0.7:5432: connection refused")
+}
+
+func TestInputErrorsPrivate(t *testing.T) {
+	is := is.New(t)
+	type input struct {
+		Replica replica  `json:"replica"`
+		Events  chan int `json:"events"`
+	}
+	k := koi.New()
+	var logs bytes.Buffer
+	k.Log = slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	route := k.Wrap(func(req *koi.Request[input]) (res koi.Response[koi.Empty]) {
+		return res
+	})
+	// A body that fails to read says where the server was reading from.
+	req := httptest.NewRequest(http.MethodPost, "/sandboxes", iotest.ErrReader(errors.New("read tcp 10.0.0.5:8080->10.0.0.9:51234: i/o timeout")))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	route.ServeHTTP(w, req)
+	is.Equal(w.Code, 400)
+	is.Equal(w.Body.String(), "{\"error\":\"Bad Request\"}\n")
+	is.True(strings.Contains(logs.String(), "10.0.0.5:8080"))
+	// A type that decodes itself can fail with anything.
+	w = post(t, route, "application/x-www-form-urlencoded", `replica=west`)
+	is.Equal(w.Code, 400)
+	is.Equal(w.Body.String(), "{\"error\":\"Bad Request\"}\n")
+	logs.Reset()
+	w = post(t, route, "application/json", `{"replica":"west"}`)
+	is.Equal(w.Code, 422)
+	is.Equal(w.Body.String(), `{"error":"replica is invalid","fields":{"replica":["is invalid"]}}`+"\n")
+	is.True(strings.Contains(logs.String(), "dial tcp 10.2.0.7:5432"))
+	// A field that can't be decoded at all is the server's bug, not the client's.
+	w = post(t, route, "application/json", `{"events":1}`)
+	is.Equal(w.Code, 500)
+	is.Equal(w.Body.String(), "{\"error\":\"Internal Server Error\"}\n")
+	is.True(strings.Contains(logs.String(), "chan int"))
+	// A form value of the wrong type prints the Go type it was meant for.
+	w = post(t, koi.New().Wrap(sandboxHandler), "application/x-www-form-urlencoded", `networking=5`)
+	is.Equal(w.Code, 400)
+	is.Equal(w.Body.String(), "{\"error\":\"Bad Request\"}\n")
+}
+
+type mode string
+
+func (m *mode) UnmarshalText(text []byte) error {
+	return koi.Invalid{"mode": {"has to be limited"}}
+}
+
+func TestInputErrorsCustom(t *testing.T) {
+	is := is.New(t)
+	type input struct {
+		Mode mode `json:"mode"`
+	}
+	route := koi.New().Wrap(func(req *koi.Request[input]) (res koi.Response[koi.Empty]) {
+		return res
+	})
+	// A type that decodes itself can return its own field errors.
+	w := post(t, route, "application/json", `{"mode":"open"}`)
+	is.Equal(w.Code, 422)
+	is.Equal(w.Body.String(), `{"error":"mode has to be limited","fields":{"mode":["has to be limited"]}}`+"\n")
+}
+
+func TestUnknownFields(t *testing.T) {
+	is := is.New(t)
+	k := koi.New()
+	route := k.Wrap(sandboxHandler)
+	w := post(t, route, "application/json", `{"netwrking":{}}`)
+	is.Equal(w.Code, 422)
+	is.Equal(w.Body.String(), `{"error":"netwrking isn't a known field","fields":{"netwrking":["isn't a known field"]}}`+"\n")
+	// Nested fields are checked too, and named by their path.
+	w = post(t, route, "application/json", `{"networking":{"allowed_host":[]}}`)
+	is.Equal(w.Body.String(), `{"error":"networking.allowed_host isn't a known field","fields":{"networking.allowed_host":["isn't a known field"]}}`+"\n")
+	// Forms and query strings carry values meant for others, so they stay lenient.
+	w = post(t, route, "application/x-www-form-urlencoded", `csrf=token&limit=2`)
+	is.Equal(w.Code, 200)
+	req := httptest.NewRequest(http.MethodPost, "/sandboxes?utm_source=mail", strings.NewReader(`{"limit":2}`))
+	req.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+	route.ServeHTTP(w, req)
+	is.Equal(w.Code, 200)
+	// They can be allowed, which ignores them.
+	k.AllowUnknownFields = true
+	w = post(t, route, "application/json", `{"netwrking":{}}`)
+	is.Equal(w.Code, 200)
+}
+
+func TestPathValues(t *testing.T) {
+	is := is.New(t)
+	k := koi.New()
+	k.Renderer = &stackRenderer{}
+	show := func(req *koi.Request[sandboxInput]) (res koi.Response[board]) {
+		return res.Body(board{ID: req.Input.ID})
+	}
+	shell := k.Wrap(func(req *koi.Request[sandboxInput]) (res koi.Response[nav]) {
+		return res.Body(nav{Tab: req.Input.ID})
+	}).View("shell")
+	mux := http.NewServeMux()
+	mux.Handle("/sandboxes/{id}", k.Wrap(show).View("page").Parent(shell))
+	mux.Handle("GET /files/{id...}", k.Wrap(show))
+	request := func(method, target, body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(method, target, strings.NewReader(body))
+		req.Header.Set("Accept", "application/json")
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, req)
+		return w
+	}
+	// The path wins over a query value of the same name, however it's spelled.
+	// Without that, which of id and ID wins changes from request to request.
+	for range 20 {
+		w := request("DELETE", "/sandboxes/abc?id=other&ID=other&id[]=other", "")
+		is.Equal(w.Body.String(), "{\"id\":\"abc\"}\n")
+	}
+	w := request("PUT", "/sandboxes/abc", "null")
+	is.Equal(w.Body.String(), "{\"id\":\"abc\"}\n")
+	w = request("GET", "/files/a/b.txt", "")
+	is.Equal(w.Body.String(), "{\"id\":\"a/b.txt\"}\n")
+	// A body field of the same name conflicts, as it does with the query.
+	w = request("PUT", "/sandboxes/abc", `{"id":"other"}`)
+	is.Equal(w.Code, 400)
+	is.Equal(w.Body.String(), "{\"error\":\"duplicate request field \\\"id\\\"\"}\n")
+	// JSON matches names loosely, so the conflict has to as well.
+	w = request("PUT", "/sandboxes/abc", `{"_I-D":"other"}`)
+	is.Equal(w.Code, 400)
+	// Other routers set the pattern too, with their own wildcard syntax.
+	req := httptest.NewRequest("GET", "/boards/12", nil)
+	req.Pattern = "/boards/{id:[0-9]+}"
+	req.SetPathValue("id", "12")
+	w = httptest.NewRecorder()
+	k.Wrap(show).ServeHTTP(w, req)
+	is.Equal(w.Body.String(), "{\"id\":\"12\"}\n")
+	// Parents bind path values too.
+	w = getHtml(t, mux, "/sandboxes/abc")
+	is.Equal(w.Body.String(), "shell:{abc}\npage:{abc}\n")
+}
+
+// pause is a duration that chooses its own format, since JSON has none for a
+// time.Duration.
+type pause time.Duration
+
+func (p pause) MarshalText() ([]byte, error) {
+	return []byte(time.Duration(p).String()), nil
+}
+
+func (p *pause) UnmarshalText(text []byte) error {
+	d, err := time.ParseDuration(string(text))
+	*p = pause(d)
+	return err
+}
+
+func TestDurations(t *testing.T) {
+	is := is.New(t)
+	type input struct {
+		Wait pause `json:"wait"`
+	}
+	route := koi.New().Wrap(func(req *koi.Request[input]) (res koi.Response[input]) {
+		return res.Body(req.Input)
+	})
+	// A type that marshals itself is decoded and encoded its own way, in JSON
+	// and in forms.
+	w := post(t, route, "application/json", `{"wait":"1.5s"}`)
+	is.Equal(w.Code, 200)
+	is.Equal(w.Body.String(), "{\"wait\":\"1.5s\"}\n")
+	w = post(t, route, "application/x-www-form-urlencoded", `wait=90s`)
+	is.Equal(w.Body.String(), "{\"wait\":\"1m30s\"}\n")
+	w = post(t, route, "application/json", `{"wait":"soon"}`)
+	is.Equal(w.Code, 422)
+	is.Equal(w.Body.String(), `{"error":"wait is invalid","fields":{"wait":["is invalid"]}}`+"\n")
+	// A plain time.Duration has no JSON format, which is the server's bug.
+	type plain struct {
+		Wait time.Duration `json:"wait"`
+	}
+	w = post(t, koi.New().Wrap(func(req *koi.Request[plain]) (res koi.Response[koi.Empty]) {
+		return res
+	}), "application/json", `{"wait":1500000000}`)
+	is.Equal(w.Code, 500)
+	w = serve(t, koi.New().Wrap(func(req *koi.Request[koi.Empty]) (res koi.Response[plain]) {
+		return res.Body(plain{Wait: time.Second})
+	}), "application/json")
+	is.Equal(w.Code, 500)
 }

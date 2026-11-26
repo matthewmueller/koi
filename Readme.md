@@ -8,7 +8,7 @@ Koi handles binding, validation, and HTML/JSON responses.
 ## Features
 
 - Typed request inputs and response bodies
-- Automatic query, form, and JSON binding
+- Automatic path, query, form, and JSON binding
 - Validation with client-facing field errors
 - HTML/JSON negotiation using the request's `Accept` header
 - Layouts that load their own data alongside the page
@@ -90,6 +90,19 @@ to the current path. A target beginning with `/` or an absolute `http://` or
 JSON requests receive the response body when one is present. Use `koi.Empty`
 for handlers with no input or output data.
 
+Wildcards in a `net/http` pattern bind to the input by name. They win over a
+query value of the same name, and a body field of the same name returns 400:
+
+```go
+type ShowInput struct {
+	ID string `json:"id"`
+}
+
+router.Handle("GET /boards/{id}", k.Wrap(show))
+```
+
+Routers that put path parameters in the query string work too.
+
 ## Parents
 
 A route can render inside another route's view. The parent has its own handler,
@@ -123,8 +136,8 @@ With the default renderer, the parent's template places the page with `slot`:
 
 - **Parents only run for HTML requests.** JSON requests get the page's data
   alone, so check access in middleware or the page's handler, not in a parent.
-- **A parent binds its input from the query string.** The request body belongs
-  to the page.
+- **A parent binds its input from the path and the query string.** The request
+  body belongs to the page.
 - **A parent's error or redirect replaces the page.** `res.Status(404).Error(err)`
   in a parent sends the 404 error page.
 - **A parent can have a parent**, like `shell.Parent(layout)`. Views render
@@ -153,6 +166,24 @@ Validation failures return 422 with field errors. Unsupported content types
 return 415, and bodies over `k.MaxBodySize` return 413. HTML currently shows an error
 page; flash-and-redirect validation is not yet supported.
 
+A JSON value of the wrong type is reported the same way, under the name the
+client sent:
+
+```sh
+curl -X PUT -H 'Content-Type: application/json' -d '{"networking": {"type": 5}}' localhost:8080/environments/dev
+# 422 {"error":"networking.type can't be a number","fields":{"networking.type":["can't be a number"]}}
+```
+
+Fields are named by their path, like `networking.type` or `tags.1`, in both
+decoding and validation errors. An embedded struct's fields are named as its
+parent's.
+
+Malformed JSON and a few other errors that only describe the request, like a
+bad URL escape, return 400 and say what's wrong. Everything else returns its
+status text unless `k.Debug` is on, because the error could describe the
+server: a body that fails to read names the server's address, and a form value
+of the wrong type prints the input's Go type.
+
 Response bodies are validated the same way before they're sent. An invalid
 response body is a server bug, so it returns 500 and its field errors are
 only exposed with `k.Debug`.
@@ -173,6 +204,11 @@ Replace `k.Renderer` or `k.Validator` to customize rendering and validation.
 The default renderer uses `html/template` files. Assign a `*slog.Logger` to
 `k.Log` to enable request logging, including underlying errors. Set
 `k.MaxBodySize` to change the 10MB request body limit, or 0 to disable it.
+
+JSON bodies with fields the input doesn't declare are rejected, so a misspelled
+`{"netwrking": {}}` returns 422 instead of being silently dropped. Set
+`k.AllowUnknownFields = true` to ignore them. Query strings and forms always
+ignore unknown keys.
 
 ## Contributions
 

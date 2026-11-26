@@ -5,8 +5,9 @@ import "net/http"
 // Request provides decoded input alongside the original HTTP request.
 type Request[In any] struct {
 	*http.Request
-	// Input contains bound and validated query and body values.
-	// Path parameters are supplied in the query string by the router.
+	// Input contains bound and validated path, query and body values. Path
+	// values come from the standard mux's wildcards, like {id}, or from the
+	// query string for routers that put them there.
 	Input In
 }
 

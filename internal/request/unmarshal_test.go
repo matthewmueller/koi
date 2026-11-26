@@ -60,7 +60,7 @@ func TestJSONMultipleValues(t *testing.T) {
 
 	err := request.Unmarshal(r, &input)
 
-	is.Equal(err.Error(), "request body must contain a single JSON value")
+	is.Equal(err.Error(), "jsontext: invalid character '{' after top-level value after offset 15")
 }
 
 func TestJSONTrailingData(t *testing.T) {
